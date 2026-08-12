@@ -12,7 +12,7 @@
 		<RepositoryUrl>https://github.com/rocha83/CacheIndexer</RepositoryUrl>
 		<PackageProjectUrl>https://github.com/rocha83/CacheIndexer</PackageProjectUrl>
 		<PackageTags>cache indexer lexical index inverted index search stemming soundex synonyms pt-br cache provider distributed cache redis garnet</PackageTags>
-		<Version>1.1.0</Version>
+		<Version>1.1.4</Version>
 		<Description>In-memory lexical cache indexer with optional PT-BR stemming (Porter), phonetic (Soundex PT-BR), synonym dictionary expansion and pluggable cache providers (in-memory, distributed Redis/Garnet, composite, persistence channel).</Description>
 		<PackageLicenseFile>GNUv2_License.txt</PackageLicenseFile>
 		<PackageIcon>cache-indexer-logo.png</PackageIcon>

@@ -146,6 +146,7 @@ using Rochas.CacheIndexer.Providers;
 
 // Inicialização única (startup da aplicação):
 DataCache.Initialize(new InMemoryCacheProvider());                              // default
+DataCache.Initialize(memorySizeLimit: 100);                                     // in-memory limitado a 100 MB
 DataCache.Initialize(new DistributedCacheProvider("localhost:6379"));           // Redis/Garnet
 DataCache.Initialize(new CompositeCacheProvider(                                 // L1 + L2
     new InMemoryCacheProvider(),
@@ -166,7 +167,7 @@ DataCache.Clear();
 | `InMemoryCacheProvider` | `ConcurrentDictionary` thread-safe, chave = hash FNV do tipo + chave JSON | desenvolvimento, catálogos pequenos, L1 |
 | `DistributedCacheProvider` | `IDistributedCache` — **Redis** ou **Microsoft Garnet** | multi-instância/pods, alta disponibilidade |
 | `CompositeCacheProvider` | L1 in-memory + L2 distribuído, write-through e **promoção de L2→L1** na leitura | latência + compartilhamento |
-| `PersistenceChannelCacheProvider` | `Channel<T>` assíncrono, backpressure (`Wait`), consumidores persistindo em 1+ SGDB | replicação master→slave por evento |
+| `PersistenceChannelCacheProvider` | canal assíncrono por assinante (fan-out real via `Subscribe`), consumidores persistindo em 1+ SGDB | replicação master→slave por evento |
 
 ### Pipeline típico
 

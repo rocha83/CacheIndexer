@@ -18,6 +18,15 @@ namespace Rochas.CacheIndexer.Providers
             _defaultProvider = defaultProvider;
         }
 
+        /// <summary>
+        /// Inicializa o provedor in-memory padrão com limite de memória em MB.
+        /// Use 0 para sem limite.
+        /// </summary>
+        public static void Initialize(int memorySizeLimit)
+        {
+            _defaultProvider = new InMemoryCacheProvider(memorySizeLimit);
+        }
+
         public static void Put(object cacheKey, object cacheItem)
         {
             var provider = _defaultProvider ?? throw new InvalidOperationException(

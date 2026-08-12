@@ -313,6 +313,14 @@ namespace Rochas.CacheIndexer.Tests
             DataCache.Get(item).Should().BeSameAs(item);
         }
 
+        [Fact]
+        public void DataCache_InitializeWithMemoryLimit_CreatesInMemoryProvider()
+        {
+            DataCache.Initialize(memorySizeLimit: 100);
+
+            DataCache.DefaultProvider.Should().BeOfType<InMemoryCacheProvider>();
+        }
+
         // ── CacheableAttribute ──────────────────────────────────────────
 
         [Fact]
