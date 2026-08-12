@@ -226,6 +226,42 @@ Conveniência para um único consumidor: `await foreach (var msg in provider.Con
 
 Backpressure: canais bounded (`Wait`); um consumidor lento além da capacidade descarta eventos só para ele. `Subscribe(capacity <= 0)` cria canal unbounded (nenhuma perda).
 
+### Replicação automática para banco (Background Worker + DataDispatcher)
+
+Para persistir os eventos do canal em um SGDB sem escrever o `foreach` na mão,
+use o **`PersistenceChannelWorker<T>`** (`BackgroundService` de
+`Microsoft.Extensions.Hosting`) + **`DataDispatcher<T>`**, que conecta no banco
+via `IGenericRepository<T>` (interface do `Rochas.DapperRepository.Specification`).
+
+```csharp
+using Rochas.CacheIndexer.Helpers;
+using Rochas.DapperRepository.Specification.Interfaces;
+using Rochas.DapperRepository;
+
+// Master publica no canal (como antes):
+DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider()));
+
+// Slave: registra o worker no DI (consumo + persistência no banco do slave):
+var slaveRepo = new GenericRepository<Product>(DatabaseEngine.SQLite, slaveConnString);
+var dispatcher = new DataDispatcher<Product>(slaveRepo);
+
+// ASP.NET Core:
+builder.Services.AddHostedService(sp =>
+    new PersistenceChannelWorker<Product>(channelProvider, dispatcher));
+```
+
+Mapeamento de ações no `DataDispatcher<T>`:
+
+| Ação do canal | Chamada no `IGenericRepository<T>` |
+|---|---|
+| `Put` | `Add(entity)` |
+| `Del` | `Remove(filter)` |
+| `Clear` / `Del(deleteAll: true)` | `NotSupportedException` (interface não expõe limpeza global) |
+
+`DispatchAsync` é `virtual` — para replicação idempotente (upsert) ou suporte a
+`DeleteAll`/`Clear`, sobrescreva no consumidor. Falhas por mensagem são
+registradas no logger e o consumo continua.
+
 ### Marcação de entidade cacheável
 
 ```csharp
