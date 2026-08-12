@@ -90,12 +90,12 @@ namespace Rochas.CacheIndexer
         /// Carrega (ou recarrega) o índice a partir dos documentos fornecidos.
         /// No-op se o índice já estiver carregado e não expirado.
         /// </summary>
-        public Task EnsureIndexLoadedAsync(Func<Task<IReadOnlyList<IndexedDocument>>> loadDocumentsFunc)
+        public Task EnsureIndexLoaded(Func<Task<IReadOnlyList<IndexedDocument>>> loadDocumentsFunc)
         {
             if (loadDocumentsFunc == null)
                 throw new ArgumentNullException(nameof(loadDocumentsFunc));
 
-            return _engine.EnsureIndexLoadedAsync(loadDocumentsFunc);
+            return _engine.EnsureIndexLoaded(loadDocumentsFunc);
         }
 
         /// <summary>
@@ -147,7 +147,7 @@ namespace Rochas.CacheIndexer
         /// permissiva: base -&gt; sinônimos -&gt; stemming -&gt; soundex.
         /// Retorna o primeiro hit encontrado.
         /// </summary>
-        public async Task<IndexSearchResult> FindBestMatchAsync(
+        public async Task<IndexSearchResult> FindBestMatch(
             string message,
             Func<Task<IReadOnlyList<IndexedDocument>>> loadDocumentsFunc,
             int? segmentId = null)
@@ -155,7 +155,7 @@ namespace Rochas.CacheIndexer
             if (string.IsNullOrWhiteSpace(message))
                 return IndexSearchResult.Empty;
 
-            await EnsureIndexLoadedAsync(loadDocumentsFunc);
+            await EnsureIndexLoaded(loadDocumentsFunc);
 
             var tiers = new (bool Synonyms, bool Stemming, bool Soundex, string Label)[]
             {

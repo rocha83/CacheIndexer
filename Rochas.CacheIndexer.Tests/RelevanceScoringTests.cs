@@ -36,7 +36,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 3, TitleHashCodes = new[] { fatura } }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
             var query = new[] { fatura, cancelamento };
             indexer.SearchIndex(query, 0.3).BestId.Should().Be(1); // "cancelamento" raro (df=1) vence
@@ -66,7 +66,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 3, TitleHashCodes = new[] { fatura } }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
             var query = new[] { fatura, cancelamento };
             indexer.SearchIndex(query, 0.3).BestId.Should().Be(1);
@@ -116,7 +116,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 3, TitleHashCodes = new[] { comum1, comum2 } }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
             var query = new[] { comum1, comum2, raro };
             var result = indexer.SearchIndex(query, 0.3);
@@ -241,7 +241,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 2, TitleHashCodes = new[] { h }, IsActive = true }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             indexer.SearchIndex(new[] { h }, 0.3).BestId.Should().Be(2);
         }
 
@@ -259,7 +259,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 1, Title = "pagamento" }
             };
 
-            var result = await indexer.FindBestMatchAsync("pagamentos", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            var result = await indexer.FindBestMatch("pagamentos", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             result.Found.Should().BeTrue();
             result.BestId.Should().Be(1);
             result.Tier.Should().Be("stemming"); // base/synonyms não casam o radical
@@ -277,7 +277,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 1, Title = "casa" }
             };
 
-            var result = await indexer.FindBestMatchAsync("caza", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            var result = await indexer.FindBestMatch("caza", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             result.Found.Should().BeTrue();
             result.BestId.Should().Be(1);
             result.Tier.Should().Be("soundex"); // "caza" ~ "casa" (mesmo código fonético)
@@ -294,7 +294,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 1, Title = "casa" }
             };
 
-            var result = await indexer.FindBestMatchAsync("astronauta", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            var result = await indexer.FindBestMatch("astronauta", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             result.Found.Should().BeFalse();
         }
 

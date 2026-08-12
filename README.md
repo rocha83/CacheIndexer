@@ -36,10 +36,10 @@ var indexer = new CacheIndexer(new CacheIndexerConfig
 });
 
 // Carrega o índice a partir dos documentos
-await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
 // Busca progressiva: base -> sinonimos -> stemming -> soundex
-var result = await indexer.FindBestMatchAsync("quero emitir uma fatura", loadDocs);
+var result = await indexer.FindBestMatch("quero emitir uma fatura", loadDocs);
 if (result.Found)
     Console.WriteLine($"Melhor doc: {result.BestId} (score {result.Score:F2}, tier {result.Tier})");
 ```
@@ -80,10 +80,10 @@ indexer.SetFeatures(CacheIndexerFeature.Synonyms | CacheIndexerFeature.Phonetic)
 
 | Método | Descrição |
 |---|---|
-| `EnsureIndexLoadedAsync(loader)` | Constrói o índice invertido (hash -> ids) e computa a frequência de documentos (IDF) |
+| `EnsureIndexLoaded(loader)` | Constrói o índice invertido (hash -> ids) e computa a frequência de documentos (IDF) |
 | `SearchIndex(query, minMatchScore, segmentId?)` | Busca no índice: cobertura de palavras + ranking IDF |
 | `Search(documents, query, minMatchScore)` | Busca direta sobre uma colecao (sem indexacao previa) |
-| `FindBestMatchAsync(message, loader, segmentId?)` | Busca progressiva em 4 tiers, do mais preciso ao mais permissivo |
+| `FindBestMatch(message, loader, segmentId?)` | Busca progressiva em 4 tiers, do mais preciso ao mais permissivo |
 | `ProcessText(title, body, documentId?)` | Tokeniza, hasheia e atualiza a frequência em memória (base do IDF) |
 | `ExtractHashes(text)` / `ExtractHashes(text, syn, stem, sx)` | Extrai hashes de um texto |
 | `InvalidateIndex()` | Limpa o indice e forca reindexacao no proximo uso |
@@ -222,7 +222,7 @@ await foreach (var msg in readerA.ReadAllAsync())
 // Slave B (SGDB B): subscribe idêntico, sem afetar o Slave A.
 ```
 
-Conveniência para um único consumidor: `await foreach (var msg in provider.ConsumeAsync(ct))`.
+Conveniência para um único consumidor: `await foreach (var msg in provider.Consume(ct))`.
 
 Backpressure: canais bounded (`Wait`); um consumidor lento além da capacidade descarta eventos só para ele. `Subscribe(capacity <= 0)` cria canal unbounded (nenhuma perda).
 

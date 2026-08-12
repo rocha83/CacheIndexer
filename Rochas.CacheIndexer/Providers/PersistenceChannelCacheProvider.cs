@@ -12,7 +12,7 @@ namespace Rochas.CacheIndexer.Providers
     /// mais SGDBs (worker/client consumer).
     ///
     /// O master grava no cache local e publica no canal; cada consumidor (slave)
-    /// se inscreve via Subscribe()/ConsumeAsync() e recebe uma cópia de cada evento
+    /// se inscreve via Subscribe()/Consume() e recebe uma cópia de cada evento
     /// (fan-out real: um canal privado por assinante), persistindo no seu banco.
     ///
     /// Backpressure: canais bounded (FullMode.Wait); se um consumidor ficar lento
@@ -106,7 +106,7 @@ namespace Rochas.CacheIndexer.Providers
         /// cada chamada cria uma assinatura privada, portanto múltiplos consumidores
         /// recebem cópias independentes dos eventos.
         /// </summary>
-        public async IAsyncEnumerable<ChannelMessage> ConsumeAsync(
+        public async IAsyncEnumerable<ChannelMessage> Consume(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var reader = Subscribe();

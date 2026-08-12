@@ -282,7 +282,7 @@ namespace Rochas.CacheIndexer.Tests
             int count,
             CancellationToken token)
         {
-            await foreach (var msg in provider.ConsumeAsync(token))
+            await foreach (var msg in provider.Consume(token))
             {
                 sink.Add(msg);
                 if (sink.Count >= count)

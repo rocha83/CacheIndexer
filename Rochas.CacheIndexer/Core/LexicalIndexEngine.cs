@@ -86,7 +86,7 @@ namespace Rochas.CacheIndexer.Core
             LoadSynonyms(SynonymsFilePath);
         }
 
-        public async Task EnsureIndexLoadedAsync(Func<Task<IReadOnlyList<IndexedDocument>>> loadDocumentsFunc)
+        public async Task EnsureIndexLoaded(Func<Task<IReadOnlyList<IndexedDocument>>> loadDocumentsFunc)
         {
             if (!IsCacheExpired) return;
 

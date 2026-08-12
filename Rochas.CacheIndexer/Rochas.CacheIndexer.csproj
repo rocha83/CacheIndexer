@@ -14,6 +14,7 @@
 		<PackageTags>cache indexer lexical index inverted index search stemming soundex synonyms pt-br cache provider distributed cache redis garnet</PackageTags>
 		<Version>1.1.4</Version>
 		<Description>In-memory lexical cache indexer with optional PT-BR stemming (Porter), phonetic (Soundex PT-BR), synonym dictionary expansion and pluggable cache providers (in-memory, distributed Redis/Garnet, composite, persistence channel).</Description>
+		<PackageReleaseNotes>1.1.4 - BREAKING: removido o sufixo "Async" dos nomes de metodos (EnsureIndexLoaded, FindBestMatch, Consume); DataCache.Initialize(memorySizeLimit); modulo de cache de objetos (ICacheProvider, InMemoryCacheProvider, DistributedCacheProvider Redis/Garnet, CompositeCacheProvider L1+L2, PersistenceChannelCacheProvider com fan-out via Subscribe); namespace Rochas.CacheIndexer.Providers. 1.0.0 - indice lexico invertido com stemming PT-BR, soundex e sinonimos; ranking por cobertura + IDF.</PackageReleaseNotes>
 		<PackageLicenseFile>GNUv2_License.txt</PackageLicenseFile>
 		<PackageIcon>cache-indexer-logo.png</PackageIcon>
 	</PropertyGroup>

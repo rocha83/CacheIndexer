@@ -143,9 +143,9 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 1, Title = "fatura", Body = null }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
-            var result = await indexer.FindBestMatchAsync("boleto", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            var result = await indexer.FindBestMatch("boleto", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             result.Found.Should().BeTrue();
             result.BestId.Should().Be(1);
             result.Score.Should().BeGreaterThan(0.9);
@@ -162,9 +162,9 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 1, Title = "fatura", Body = null }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
-            var result = await indexer.FindBestMatchAsync("boleto", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            var result = await indexer.FindBestMatch("boleto", () => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             result.Found.Should().BeFalse();
         }
 
@@ -178,7 +178,7 @@ namespace Rochas.CacheIndexer.Tests
                 new IndexedDocument { Id = 2, SegmentId = 20, Title = "fatura" }
             };
 
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
             var query = indexer.ExtractHashes("fatura");
             var scoped = indexer.SearchIndex(query, minMatchScore: 0.9, segmentId: 20);
@@ -258,7 +258,7 @@ namespace Rochas.CacheIndexer.Tests
         }
 
         [Fact]
-        public void SearchIndex_RareWordBeatsCommonWordOnTie()
+        public async Task SearchIndex_RareWordBeatsCommonWordOnTie()
         {
             var indexer = new CacheIndexer { EnableSynonyms = false };
 
@@ -274,7 +274,7 @@ namespace Rochas.CacheIndexer.Tests
 
             // amboso tem cobertura 1/1; o doc 1 tem o termo raro (maior IDF)
             var query = new[] { comum, raro };
-            indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs)).GetAwaiter().GetResult();
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
 
             var result = indexer.SearchIndex(query, minMatchScore: 0.3);
             result.Found.Should().BeTrue();
@@ -328,7 +328,7 @@ namespace Rochas.CacheIndexer.Tests
         {
             var indexer = new CacheIndexer { EnableSynonyms = true };
             var docs = new List<IndexedDocument>();
-            await indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+            await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
             indexer.IsCacheExpired.Should().BeFalse();
 
             indexer.InvalidateIndex();
