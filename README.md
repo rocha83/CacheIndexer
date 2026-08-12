@@ -2,11 +2,12 @@
 
 [![NuGet](https://img.shields.io/nuget/v/Rochas.CacheIndexer.svg)](https://www.nuget.org/packages/Rochas.CacheIndexer)
 
-Índice léxico invertido em memória para busca de conhecimento/respostas com cache de hashes, segregação por segmento e **features de normalização liga/desliga**:
+Índice léxico invertido em memória para busca de conhecimento/respostas com cache de hashes, segregação por segmento e **features de normalização liga/desliga**, mais **provedores de cache de objetos** plugáveis (in-memory, distribuído Redis/Garnet, composto e persistência por evento):
 
 - **Sinônimos** — dicionário PT-BR embarcado (`pt_br_synonyms.json`) ou customizado;
 - **Stemming** — Stemmer de Porter para PT-BR (`Rochas.PTStemmer`);
-- **Soundex** — filtro fonético Soundex adaptado para PT-BR.
+- **Soundex** — filtro fonético Soundex adaptado para PT-BR;
+- **Cache de objetos** — `ICacheProvider` com `InMemoryCacheProvider`, `DistributedCacheProvider` (Redis/Garnet), `CompositeCacheProvider` (L1+L2) e `PersistenceChannelCacheProvider` (replicação assíncrona por evento a 1+ SGDB).
 
 Baseada em `Rochas.PTStemmer` e `Rochas.Extensions`, compatível com **.NET Standard 2.1+**.
 
@@ -132,6 +133,110 @@ var config = new CacheIndexerConfig
     LoadEmbeddedSynonyms = true,                 // fallback: dicionario embarcado
     MinMatchScore = 0.3
 };
+```
+
+---
+
+## 💾 Cache de objetos (ICacheProvider)
+
+Cache de entidades/POCOs com provedores plugáveis, desacoplado de implementação concreta. A fachada estática `DataCache` concentra o acesso:
+
+```csharp
+using Rochas.CacheIndexer.Providers;
+
+// Inicialização única (startup da aplicação):
+DataCache.Initialize(new InMemoryCacheProvider());                              // default
+DataCache.Initialize(new DistributedCacheProvider("localhost:6379"));           // Redis/Garnet
+DataCache.Initialize(new CompositeCacheProvider(                                 // L1 + L2
+    new InMemoryCacheProvider(),
+    new DistributedCacheProvider("localhost:6379")));
+DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider())); // master
+
+// Uso:
+DataCache.Put(new Product { Id = 1 }, product);
+var product = DataCache.Get(new Product { Id = 1 });
+DataCache.Del(new Product { Id = 1 }, deleteAll: true);
+DataCache.Clear();
+```
+
+### Provedores
+
+| Provedor | Descrição | Use quando |
+|---|---|---|
+| `InMemoryCacheProvider` | `ConcurrentDictionary` thread-safe, chave = hash FNV do tipo + chave JSON | desenvolvimento, catálogos pequenos, L1 |
+| `DistributedCacheProvider` | `IDistributedCache` — **Redis** ou **Microsoft Garnet** | multi-instância/pods, alta disponibilidade |
+| `CompositeCacheProvider` | L1 in-memory + L2 distribuído, write-through e **promoção de L2→L1** na leitura | latência + compartilhamento |
+| `PersistenceChannelCacheProvider` | `Channel<T>` assíncrono, backpressure (`Wait`), consumidores persistindo em 1+ SGDB | replicação master→slave por evento |
+
+### Pipeline típico
+
+```
+L1 in-memory (microssegundos) → L2 distribuído Redis/Garnet (milissegundos) → banco SQL
+```
+
+- **Leitura** no composto: tenta L1 → em miss busca na L2 e promove para L1 (a partir da primeira leitura o item é servido em memória);
+- **Escrita** no composto: L1 e L2 juntas (write-through).
+
+### Cache distribuído (Redis / Garnet)
+
+`DistributedCacheProvider` usa a abstração `IDistributedCache` — funciona com qualquer implementação compatível. Para ASP.NET Core (injeção de dependência):
+
+```csharp
+// Program.cs
+builder.Services.AddStackExchangeRedisCache(o =>
+{
+    o.Configuration = builder.Configuration.GetConnectionString("Redis");
+    o.InstanceName = "cache:";
+});
+
+DataCache.Initialize(new DistributedCacheProvider(
+    cache, instanceName: "cache:", defaultExpiration: TimeSpan.FromMinutes(5)));
+```
+
+O **Microsoft Garnet** é um servidor Redis-compatible; basta apontar o cliente Redis para o endpoint Garnet — o `DistributedCacheProvider` funciona inalterado.
+
+### Persistência por evento (master → 1+ SGDB)
+
+O master grava no cache local e publica no canal; cada consumidor (slave) se inscreve e recebe uma **cópia** de cada evento (canal privado por assinante — fan-out real):
+
+```csharp
+// Slave A (SGDB A):
+var readerA = provider.Subscribe(capacity: 1000);
+await foreach (var msg in readerA.ReadAllAsync())
+{
+    switch (msg.Action)
+    {
+        case PersistenceChannelCacheProvider.ChannelAction.Put:
+            await repoA.AddAsync(msg.CacheItem);      // SGDB A
+            break;
+        case PersistenceChannelCacheProvider.ChannelAction.Del:
+            await repoA.RemoveAsync(msg.CacheKey);    // SGDB B
+            break;
+        case PersistenceChannelCacheProvider.ChannelAction.Clear:
+            await repoA.ClearAsync();
+            break;
+    }
+}
+
+// Slave B (SGDB B): subscribe idêntico, sem afetar o Slave A.
+```
+
+Conveniência para um único consumidor: `await foreach (var msg in provider.ConsumeAsync(ct))`.
+
+Backpressure: canais bounded (`Wait`); um consumidor lento além da capacidade descarta eventos só para ele. `Subscribe(capacity <= 0)` cria canal unbounded (nenhuma perda).
+
+### Marcação de entidade cacheável
+
+```csharp
+using Rochas.CacheIndexer.Annotations;
+using Rochas.CacheIndexer.Providers;
+
+[Cacheable(typeof(InMemoryCacheProvider))]
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
 ```
 
 ---

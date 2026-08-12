@@ -11,9 +11,9 @@
 		<RepositoryType>Git</RepositoryType>
 		<RepositoryUrl>https://github.com/rocha83/CacheIndexer</RepositoryUrl>
 		<PackageProjectUrl>https://github.com/rocha83/CacheIndexer</PackageProjectUrl>
-		<PackageTags>cache indexer lexical index inverted index search stemming soundex synonyms pt-br</PackageTags>
-		<Version>1.0.0</Version>
-		<Description>In-memory lexical cache indexer with optional PT-BR stemming (Porter), phonetic (Soundex PT-BR) and synonym dictionary expansion.</Description>
+		<PackageTags>cache indexer lexical index inverted index search stemming soundex synonyms pt-br cache provider distributed cache redis garnet</PackageTags>
+		<Version>1.1.0</Version>
+		<Description>In-memory lexical cache indexer with optional PT-BR stemming (Porter), phonetic (Soundex PT-BR), synonym dictionary expansion and pluggable cache providers (in-memory, distributed Redis/Garnet, composite, persistence channel).</Description>
 		<PackageLicenseFile>GNUv2_License.txt</PackageLicenseFile>
 		<PackageIcon>cache-indexer-logo.png</PackageIcon>
 	</PropertyGroup>
@@ -29,9 +29,12 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.0" />
 		<PackageReference Include="Rochas.Extensions" Version="1.2.6" />
 		<PackageReference Include="Rochas.PTStemmer" Version="1.0.2" />
 		<PackageReference Include="System.Text.Json" Version="10.0.8" />
+		<PackageReference Include="System.Threading.Channels" Version="9.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>
