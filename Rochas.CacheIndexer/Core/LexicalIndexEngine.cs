@@ -14,22 +14,23 @@ namespace Rochas.CacheIndexer.Core
     /// <summary>
     /// Motor de índice léxico invertido em memória.
     /// Mapeia hashes uint de termos normalizados -> lista de Ids,
-    /// segregado por SegmentId e separado entre campo de título (peso maior)
-    /// e campo de corpo (peso menor).
+    /// segregado por SegmentId e separado entre campo de título e corpo.
+    /// O peso de cada termo é derivado da frequência de documentos (IDF):
+    /// quanto menos registros um hash aponta, maior seu peso de matching.
     /// </summary>
     internal class LexicalIndexEngine
     {
         private readonly Dictionary<uint, uint[]> _synonymMap = new Dictionary<uint, uint[]>();
         private readonly Dictionary<int, Dictionary<uint, List<int>>> _titleSegmentIndexes = new Dictionary<int, Dictionary<uint, List<int>>>();
         private readonly Dictionary<int, Dictionary<uint, List<int>>> _bodySegmentIndexes = new Dictionary<int, Dictionary<uint, List<int>>>();
+        private readonly Dictionary<uint, int> _documentFrequency = new Dictionary<uint, int>();
+        private readonly Dictionary<int, HashSet<uint>> _idfDocTracker = new Dictionary<int, HashSet<uint>>();
         private DateTime? _lastLoadedAt;
         private readonly object _indexLock = new object();
 
         public bool EnableStemming { get; set; }
         public bool EnablePhoneticFilter { get; set; }
         public bool EnableSynonyms { get; set; } = true;
-        public double TitleWeight { get; set; } = 3.0;
-        public double BodyWeight { get; set; } = 1.0;
 
         public string SynonymsFilePath { get; set; }
         public bool LoadEmbeddedSynonyms { get; set; } = true;
@@ -56,8 +57,6 @@ namespace Rochas.CacheIndexer.Core
                 EnableSynonyms = config.EnableSynonyms;
                 SynonymsFilePath = config.SynonymsFilePath;
                 LoadEmbeddedSynonyms = config.LoadEmbeddedSynonyms;
-                TitleWeight = config.TitleWeight;
-                BodyWeight = config.BodyWeight;
             }
 
             if (EnableSynonyms)
@@ -72,6 +71,8 @@ namespace Rochas.CacheIndexer.Core
             {
                 _titleSegmentIndexes.Clear();
                 _bodySegmentIndexes.Clear();
+                _documentFrequency.Clear();
+                _idfDocTracker.Clear();
                 _lastLoadedAt = null;
             }
         }
@@ -100,9 +101,12 @@ namespace Rochas.CacheIndexer.Core
 
                 _titleSegmentIndexes.Clear();
                 _bodySegmentIndexes.Clear();
+                _documentFrequency.Clear();
 
                 foreach (var doc in documents)
                 {
+                    if (!doc.IsActive) continue;
+
                     int segKey = doc.SegmentId ?? 0;
 
                     var expandedTitleHashes = ExpandTokensOrHashes(doc.Title, doc.TitleHashCodes);
@@ -114,6 +118,7 @@ namespace Rochas.CacheIndexer.Core
                             _titleSegmentIndexes[segKey] = titleIndex;
                         }
                         AddHashesToIndex(titleIndex, expandedTitleHashes, doc.Id);
+                        CountDocumentFrequency(expandedTitleHashes, doc.Id);
                     }
 
                     var expandedBodyHashes = ExpandTokensOrHashes(doc.Body, doc.BodyHashCodes);
@@ -125,10 +130,33 @@ namespace Rochas.CacheIndexer.Core
                             _bodySegmentIndexes[segKey] = bodyIndex;
                         }
                         AddHashesToIndex(bodyIndex, expandedBodyHashes, doc.Id);
+                        CountDocumentFrequency(expandedBodyHashes, doc.Id);
                     }
                 }
 
                 _lastLoadedAt = DateTime.UtcNow;
+            }
+        }
+
+        /// <summary>
+        /// Conta em quantos documentos distintos cada hash aparece, para o
+        /// cálculo do IDF (quanto menos registros um termo aponta, maior o peso).
+        /// </summary>
+        private void CountDocumentFrequency(IEnumerable<uint> hashes, int id)
+        {
+            if (!_idfDocTracker.TryGetValue(id, out var docHashes))
+            {
+                docHashes = new HashSet<uint>();
+                _idfDocTracker[id] = docHashes;
+            }
+
+            foreach (var hash in hashes)
+            {
+                if (docHashes.Add(hash))
+                {
+                    _documentFrequency.TryGetValue(hash, out var count);
+                    _documentFrequency[hash] = count + 1;
+                }
             }
         }
 
@@ -283,7 +311,7 @@ namespace Rochas.CacheIndexer.Core
             return validPath != null ? File.ReadAllText(validPath) : null;
         }
 
-        public TextHashResult ProcessText(string title, string body = null)
+        public TextHashResult ProcessText(string title, string body = null, int? documentId = null)
         {
             var titleTokens = title?.Tokenize() ?? Array.Empty<string>();
             var bodyTokens = body?.Tokenize() ?? Array.Empty<string>();
@@ -300,6 +328,17 @@ namespace Rochas.CacheIndexer.Core
             foreach (var token in bodyTokensDistinct)
                 ProcessToken(token, bodyHashesSet, EnableSynonyms, EnableStemming, EnablePhoneticFilter);
 
+            // Frequencia de documentos mantida em memoria: atualizada durante o
+            // ProcessText para que o IDF (desempate) reflita o corpus corrente.
+            lock (_indexLock)
+            {
+                var processedId = ResolveDocumentId(documentId);
+                if (titleHashesSet.Count > 0)
+                    CountDocumentFrequency(titleHashesSet, processedId);
+                if (bodyHashesSet.Count > 0)
+                    CountDocumentFrequency(bodyHashesSet, processedId);
+            }
+
             return new TextHashResult
             {
                 TitleHashCodes = titleHashesSet.ToArray(),
@@ -308,6 +347,18 @@ namespace Rochas.CacheIndexer.Core
                 BodyKeywords = string.Join(",", bodyTokensDistinct)
             };
         }
+
+        /// <summary>
+        /// Sem documentId explícito, cada chamada de ProcessText conta como um
+        /// documento distinto (ids negativos nunca colidem com ids reais).
+        /// </summary>
+        private int ResolveDocumentId(int? documentId)
+        {
+            if (documentId.HasValue) return documentId.Value;
+            return --_implicitDocCounter;
+        }
+
+        private int _implicitDocCounter;
 
         public uint[] ExtractHashes(string text)
         {
@@ -367,8 +418,10 @@ namespace Rochas.CacheIndexer.Core
             if (queryHashes == null || queryHashes.Length == 0)
                 return IndexSearchResult.Empty;
 
-            var titleIndexesToSearch = new List<Dictionary<uint, List<int>>>();
-            var bodyIndexesToSearch = new List<Dictionary<uint, List<int>>>();
+            List<Dictionary<uint, List<int>>> titleIndexesToSearch;
+            List<Dictionary<uint, List<int>>> bodyIndexesToSearch;
+            Dictionary<uint, int> docFrequencySnapshot;
+            int totalDocs;
 
             lock (_indexLock)
             {
@@ -377,40 +430,41 @@ namespace Rochas.CacheIndexer.Core
 
                 if (segmentId.HasValue)
                 {
-                    if (_titleSegmentIndexes.TryGetValue(segmentId.Value, out var titleTarget))
-                    {
-                        titleIndexesToSearch.Add(titleTarget);
-                    }
-                    if (_bodySegmentIndexes.TryGetValue(segmentId.Value, out var bodyTarget))
-                    {
-                        bodyIndexesToSearch.Add(bodyTarget);
-                    }
+                    titleIndexesToSearch = _titleSegmentIndexes.TryGetValue(segmentId.Value, out var t)
+                        ? new List<Dictionary<uint, List<int>>> { t }
+                        : new List<Dictionary<uint, List<int>>>();
+                    bodyIndexesToSearch = _bodySegmentIndexes.TryGetValue(segmentId.Value, out var b)
+                        ? new List<Dictionary<uint, List<int>>> { b }
+                        : new List<Dictionary<uint, List<int>>>();
                 }
                 else
                 {
-                    titleIndexesToSearch.AddRange(_titleSegmentIndexes.Values);
-                    bodyIndexesToSearch.AddRange(_bodySegmentIndexes.Values);
+                    titleIndexesToSearch = _titleSegmentIndexes.Values.ToList();
+                    bodyIndexesToSearch = _bodySegmentIndexes.Values.ToList();
                 }
+
+                if (titleIndexesToSearch.Count == 0 && bodyIndexesToSearch.Count == 0)
+                    return IndexSearchResult.Empty;
+
+                docFrequencySnapshot = new Dictionary<uint, int>(_documentFrequency);
+                totalDocs = _idfDocTracker.Count;
             }
 
-            if (titleIndexesToSearch.Count == 0 && bodyIndexesToSearch.Count == 0)
-                return IndexSearchResult.Empty;
-
             var querySet = new HashSet<uint>(queryHashes);
-            var candidateMatchCounts = new Dictionary<int, double>();
+            var candidateCoverage = new Dictionary<int, int>();
+            var candidateIdfSum = new Dictionary<int, double>();
+            var candidateHashes = new Dictionary<int, HashSet<uint>>();
 
+            // Criterio 1: cobertura de palavras (maximo de termos da expressao).
+            // Criterio 2 (desempate): peso IDF por termo, calculado no indexing.
             foreach (var titleIndexSnapshot in titleIndexesToSearch)
             {
                 foreach (var hash in querySet)
                 {
-                    if (titleIndexSnapshot.TryGetValue(hash, out var ids))
-                    {
-                        foreach (var id in ids)
-                        {
-                            candidateMatchCounts.TryGetValue(id, out var currentScore);
-                            candidateMatchCounts[id] = currentScore + TitleWeight;
-                        }
-                    }
+                    if (!titleIndexSnapshot.TryGetValue(hash, out var ids)) continue;
+                    double idf = ComputeIdf(hash, totalDocs, docFrequencySnapshot);
+                    foreach (var id in ids)
+                        AddCandidateMatch(id, hash, idf, candidateHashes, candidateCoverage, candidateIdfSum);
                 }
             }
 
@@ -418,31 +472,29 @@ namespace Rochas.CacheIndexer.Core
             {
                 foreach (var hash in querySet)
                 {
-                    if (bodyIndexSnapshot.TryGetValue(hash, out var ids))
-                    {
-                        foreach (var id in ids)
-                        {
-                            candidateMatchCounts.TryGetValue(id, out var currentScore);
-                            candidateMatchCounts[id] = currentScore + BodyWeight;
-                        }
-                    }
+                    if (!bodyIndexSnapshot.TryGetValue(hash, out var ids)) continue;
+                    double idf = ComputeIdf(hash, totalDocs, docFrequencySnapshot);
+                    foreach (var id in ids)
+                        AddCandidateMatch(id, hash, idf, candidateHashes, candidateCoverage, candidateIdfSum);
                 }
             }
 
-            if (candidateMatchCounts.Count == 0)
+            if (candidateCoverage.Count == 0)
                 return IndexSearchResult.Empty;
 
-            var best = candidateMatchCounts
+            var best = candidateCoverage
                 .Select(kvp =>
                 {
-                    double score = kvp.Value / (querySet.Count * TitleWeight);
-                    return (Id: kvp.Key, Score: score);
+                    double coverage = (double)kvp.Value / querySet.Count;
+                    return (Id: kvp.Key, Coverage: coverage, IdFWeight: candidateIdfSum[kvp.Key]);
                 })
-                .Where(x => x.Score >= minMatchScore)
-                .OrderByDescending(x => x.Score)
+                .Where(x => x.Coverage >= minMatchScore)
+                .OrderByDescending(x => x.Coverage)
+                .ThenByDescending(x => x.IdFWeight)
+                .ThenBy(x => x.Id)
                 .FirstOrDefault();
 
-            return best.Id != 0 ? new IndexSearchResult { BestId = best.Id, Score = best.Score } : IndexSearchResult.Empty;
+            return best.Id != 0 ? new IndexSearchResult { BestId = best.Id, Score = best.Coverage } : IndexSearchResult.Empty;
         }
 
         public IndexSearchResult Search(IEnumerable<IndexedDocument> documents, uint[] queryHashes, double minMatchScore)
@@ -460,38 +512,93 @@ namespace Rochas.CacheIndexer.Core
                 return IndexSearchResult.Empty;
 
             var querySet = new HashSet<uint>(queryHashes);
+            var documentFrequency = ComputeDocumentFrequency(activeDocuments);
+            int totalDocs = activeDocuments.Count;
 
             var scored = activeDocuments
                 .AsParallel()
                 .Select(doc =>
                 {
-                    double matchScoreSum = 0.0;
                     var titleHashes = doc.TitleHashCodes ?? Array.Empty<uint>();
                     var bodyHashes = doc.BodyHashCodes ?? Array.Empty<uint>();
 
+                    var matched = new HashSet<uint>();
+                    double idfSum = 0.0;
+
                     foreach (var h in querySet)
                     {
-                        if (Array.IndexOf(titleHashes, h) >= 0)
+                        if (Array.IndexOf(titleHashes, h) >= 0 || Array.IndexOf(bodyHashes, h) >= 0)
                         {
-                            matchScoreSum += TitleWeight;
-                        }
-                        else if (Array.IndexOf(bodyHashes, h) >= 0)
-                        {
-                            matchScoreSum += BodyWeight;
+                            if (matched.Add(h))
+                            {
+                                idfSum += ComputeIdf(h, totalDocs, documentFrequency);
+                            }
                         }
                     }
 
-                    double score = matchScoreSum / (querySet.Count * TitleWeight);
-                    return (Document: doc, Score: score);
+                    double coverage = (double)matched.Count / querySet.Count;
+                    return (Document: doc, Coverage: coverage, IdFWeight: idfSum);
                 })
-                .Where(x => x.Score >= minMatchScore)
-                .OrderByDescending(x => x.Score)
+                .Where(x => x.Coverage >= minMatchScore)
+                .OrderByDescending(x => x.Coverage)
+                .ThenByDescending(x => x.IdFWeight)
                 .ThenBy(x => x.Document.Id)
                 .FirstOrDefault();
 
             return scored.Document != null
-                ? new IndexSearchResult { BestId = scored.Document.Id, Score = scored.Score }
+                ? new IndexSearchResult { BestId = scored.Document.Id, Score = scored.Coverage }
                 : IndexSearchResult.Empty;
+        }
+
+        private static Dictionary<uint, int> ComputeDocumentFrequency(IEnumerable<IndexedDocument> documents)
+        {
+            var documentFrequency = new Dictionary<uint, int>();
+            foreach (var doc in documents)
+            {
+                var hashes = new HashSet<uint>();
+                if (doc.TitleHashCodes != null) hashes.UnionWith(doc.TitleHashCodes);
+                if (doc.BodyHashCodes != null) hashes.UnionWith(doc.BodyHashCodes);
+
+                foreach (var hash in hashes)
+                {
+                    documentFrequency.TryGetValue(hash, out var count);
+                    documentFrequency[hash] = count + 1;
+                }
+            }
+
+            return documentFrequency;
+        }
+
+        private static void AddCandidateMatch(
+            int id, uint hash, double idf,
+            Dictionary<int, HashSet<uint>> candidateHashes,
+            Dictionary<int, int> candidateCoverage,
+            Dictionary<int, double> candidateIdfSum)
+        {
+            if (!candidateHashes.TryGetValue(id, out var matched))
+            {
+                matched = new HashSet<uint>();
+                candidateHashes[id] = matched;
+            }
+
+            if (matched.Add(hash))
+            {
+                candidateCoverage.TryGetValue(id, out var coverage);
+                candidateCoverage[id] = coverage + 1;
+
+                candidateIdfSum.TryGetValue(id, out var idfSum);
+                candidateIdfSum[id] = idfSum + idf;
+            }
+        }
+
+        /// <summary>
+        /// Peso inverso de frequência de documentos: quanto menos registros o
+        /// termo aponta, maior o valor. Termos raros pontuam mais que os comuns.
+        /// </summary>
+        private static double ComputeIdf(uint hash, int totalDocs, Dictionary<uint, int> documentFrequency)
+        {
+            documentFrequency.TryGetValue(hash, out var docCount);
+            return Math.Log(1.0 + (double)totalDocs / (1.0 + docCount));
         }
 
         private static string StemWord(string word)

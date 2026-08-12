@@ -1,3 +1,4 @@
+using System;
 using Rochas.CacheIndexer.Enumerators;
 
 namespace Rochas.CacheIndexer.Helpers
@@ -29,17 +30,25 @@ namespace Rochas.CacheIndexer.Helpers
         /// </summary>
         public bool LoadEmbeddedSynonyms { get; set; } = true;
 
-        /// <summary>Score mínimo de match para um candidato ser aceito.</summary>
+        /// <summary>
+        /// Score mínimo de match para um candidato ser aceito.
+        /// </summary>
         public double MinMatchScore { get; set; } = 0.3;
 
         /// <summary>
-        /// Peso de um termo casado no campo de título/pergunta.
+        /// Obsoleto: o ranking agora é derivado do IDF (frequência inversa de
+        /// documentos) calculado durante o indexing — termos raros pontuam mais.
+        /// Mantido apenas para compatibilidade, não afeta o ranking.
         /// </summary>
+        [Obsolete("Peso fixo por campo descontinuado: o ranking usa cobertura de palavras + IDF.")]
         public double TitleWeight { get; set; } = 3.0;
 
         /// <summary>
-        /// Peso de um termo casado no campo de corpo/resposta.
+        /// Obsoleto: o ranking agora é derivado do IDF (frequência inversa de
+        /// documentos) calculado durante o indexing — termos raros pontuam mais.
+        /// Mantido apenas para compatibilidade, não afeta o ranking.
         /// </summary>
+        [Obsolete("Peso fixo por campo descontinuado: o ranking usa cobertura de palavras + IDF.")]
         public double BodyWeight { get; set; } = 1.0;
 
         /// <summary>

@@ -190,7 +190,7 @@ namespace Rochas.CacheIndexer.Tests
         }
 
         [Fact]
-        public void Search_OverPrecomputedHashes_WeightsTitleHigher()
+        public void Search_OverPrecomputedHashes_TieBrokenById()
         {
             var indexer = new CacheIndexer { EnableSynonyms = false };
             var tokenHash = indexer.ExtractHashes("fatura", false, false, false).First();
@@ -205,7 +205,105 @@ namespace Rochas.CacheIndexer.Tests
             var result = indexer.Search(docs, query, minMatchScore: 0.9);
 
             result.Found.Should().BeTrue();
-            result.BestId.Should().Be(1); // título pesa mais (3.0 x 1.0)
+            result.BestId.Should().Be(1); // cobertura/IDF iguais -> desempate por Id
+        }
+
+        // ── Relevância: cobertura de palavras (max de termos) ────────────
+
+        [Fact]
+        public void Search_CoveragePrimary_WinsByMoreMatchedWords()
+        {
+            var indexer = new CacheIndexer { EnableSynonyms = false };
+
+            var a = indexer.ExtractHashes("fatura", false, false, false).First();
+            var b = indexer.ExtractHashes("boleto", false, false, false).First();
+            var c = indexer.ExtractHashes("nota", false, false, false).First();
+
+            var docs = new List<IndexedDocument>
+            {
+                new IndexedDocument { Id = 1, TitleHashCodes = new[] { a } },
+                new IndexedDocument { Id = 2, TitleHashCodes = new[] { a, b, c } }
+            };
+
+            var query = new[] { a, b, c };
+            var result = indexer.Search(docs, query, minMatchScore: 0.3);
+
+            result.Found.Should().BeTrue();
+            result.BestId.Should().Be(2); // 3/3 palavras > 1/3
+        }
+
+        // ── Relevância: IDF (termo raro vale mais) ───────────────────────
+
+        [Fact]
+        public void Search_IdfWeightsRareWordHigher()
+        {
+            var indexer = new CacheIndexer { EnableSynonyms = false };
+
+            // "comum" aparece em 2 docs; "raro" aparece em 1 doc
+            var comum = indexer.ExtractHashes("fatura", false, false, false).First();
+            var raro = indexer.ExtractHashes("cancelamento", false, false, false).First();
+
+            var docs = new List<IndexedDocument>
+            {
+                new IndexedDocument { Id = 1, TitleHashCodes = new[] { comum, raro } },
+                new IndexedDocument { Id = 2, TitleHashCodes = new[] { comum } }
+            };
+
+            var query = new[] { comum, raro };
+            var result = indexer.Search(docs, query, minMatchScore: 0.3);
+
+            result.Found.Should().BeTrue();
+            result.BestId.Should().Be(1); // cobre 2/2 palavras e ainda tem o termo raro
+            result.Score.Should().Be(1.0);
+        }
+
+        [Fact]
+        public void SearchIndex_RareWordBeatsCommonWordOnTie()
+        {
+            var indexer = new CacheIndexer { EnableSynonyms = false };
+
+            var comum = indexer.ExtractHashes("fatura", false, false, false).First();
+            var raro = indexer.ExtractHashes("cancelamento", false, false, false).First();
+
+            var docs = new List<IndexedDocument>
+            {
+                new IndexedDocument { Id = 1, TitleHashCodes = new[] { raro } },
+                new IndexedDocument { Id = 2, TitleHashCodes = new[] { comum } },
+                new IndexedDocument { Id = 3, TitleHashCodes = new[] { comum } }
+            };
+
+            // amboso tem cobertura 1/1; o doc 1 tem o termo raro (maior IDF)
+            var query = new[] { comum, raro };
+            indexer.EnsureIndexLoadedAsync(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs)).GetAwaiter().GetResult();
+
+            var result = indexer.SearchIndex(query, minMatchScore: 0.3);
+            result.Found.Should().BeTrue();
+            result.BestId.Should().Be(1);
+        }
+
+        // ── Relevância: cobertura vence IDF em primeiro critério ─────────
+
+        [Fact]
+        public void Search_CoverageBeatsIdf_MoreWordsWins()
+        {
+            var indexer = new CacheIndexer { EnableSynonyms = false };
+
+            var comum1 = indexer.ExtractHashes("fatura", false, false, false).First();
+            var comum2 = indexer.ExtractHashes("pagamento", false, false, false).First();
+            var raro = indexer.ExtractHashes("cancelamento", false, false, false).First();
+
+            var docs = new List<IndexedDocument>
+            {
+                new IndexedDocument { Id = 1, TitleHashCodes = new[] { raro } },                          // 1 palavra rara (IDF alto)
+                new IndexedDocument { Id = 2, TitleHashCodes = new[] { comum1, comum2 } },               // 2 palavras comuns (IDF baixo)
+                new IndexedDocument { Id = 3, TitleHashCodes = new[] { comum1, comum2 } }                // comum1/comum2 frequentes
+            };
+
+            var query = new[] { comum1, comum2, raro };
+            var result = indexer.Search(docs, query, minMatchScore: 0.3);
+
+            result.Found.Should().BeTrue();
+            result.BestId.Should().Be(2); // cobertura 2/3 prevalece sobre o IDF do termo raro (1/3)
         }
 
         [Fact]

@@ -79,14 +79,44 @@ indexer.SetFeatures(CacheIndexerFeature.Synonyms | CacheIndexerFeature.Phonetic)
 
 | Método | Descrição |
 |---|---|
-| `EnsureIndexLoadedAsync(loader)` | Constrói o índice invertido (hash -> ids) a partir dos documentos |
-| `SearchIndex(query, minMatchScore, segmentId?)` | Busca no índice; titulo pesa 3.0, corpo 1.0 |
+| `EnsureIndexLoadedAsync(loader)` | Constrói o índice invertido (hash -> ids) e computa a frequência de documentos (IDF) |
+| `SearchIndex(query, minMatchScore, segmentId?)` | Busca no índice: cobertura de palavras + ranking IDF |
 | `Search(documents, query, minMatchScore)` | Busca direta sobre uma colecao (sem indexacao previa) |
 | `FindBestMatchAsync(message, loader, segmentId?)` | Busca progressiva em 4 tiers, do mais preciso ao mais permissivo |
-| `ProcessText(title, body)` | Tokeniza e hasheia um par titulo/corpo (para persistencia/learning) |
+| `ProcessText(title, body, documentId?)` | Tokeniza, hasheia e atualiza a frequência em memória (base do IDF) |
 | `ExtractHashes(text)` / `ExtractHashes(text, syn, stem, sx)` | Extrai hashes de um texto |
 | `InvalidateIndex()` | Limpa o indice e forca reindexacao no proximo uso |
 | `SetFeatures` / `GetFeatures` | Liga/desliga features em conjunto |
+
+---
+
+## 🎯 Estratégia de relevância (cobertura + ranking)
+
+Dois critérios combinados na busca:
+
+1. **Cobertura (obtenção)** — vence o conteúdo que dá match com o **máximo de palavras distintas** da expressão. `Score = palavras casadas / palavras da expressão`.
+
+2. **Ranking (desempate por IDF)** — a **frequência de documentos** é mantida em um **dicionário em memória** e atualizada **durante o `ProcessText`**: quanto menos registros aquele hash/palavra aponta, maior seu peso (`idf = ln(1 + N / (1 + df))`). O desempate é calculado **no instante da busca** usando essa frequência corrente.
+
+Empatados em cobertura, vence quem tem os termos mais raros; em último caso, o menor `Id`.
+
+```
+Doc A: "fatura, boleto"          <- termo "cancelamento" é raro no índice
+Doc B: "cancelamento"            <- só casou 1 palavra (rara)
+
+query: "fatura boleto cancelamento"
+-> Doc A vence (2/3 palavras) mesmo com IDF menor por termo
+-> Doc B só vence se a cobertura empatar (1/1 x 1/1) e o termo for mais raro
+```
+
+Como a frequência vive no dicionário em memória, o aprendizado em runtime muda o ranking sem reindexar:
+
+```csharp
+indexer.ProcessText("fatura", null, documentId: 42); // soma df("fatura") em memória
+// a próxima busca já recalcula o IDF de "fatura" no desempate
+```
+
+> `TitleWeight`/`BodyWeight` foram descontinuados (pesos fixos por campo não refletem raridade).
 
 ---
 
@@ -100,9 +130,7 @@ var config = new CacheIndexerConfig
     EnableSynonyms = true,
     SynonymsFilePath = "custom_synonyms.json",   // custom path (opcional)
     LoadEmbeddedSynonyms = true,                 // fallback: dicionario embarcado
-    MinMatchScore = 0.3,
-    TitleWeight = 3.0,
-    BodyWeight = 1.0
+    MinMatchScore = 0.3
 };
 ```
 

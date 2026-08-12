@@ -100,10 +100,13 @@ namespace Rochas.CacheIndexer
 
         /// <summary>
         /// Tokeniza e hasheia um par título/corpo usando as features atuais.
+        /// Atualiza a frequência de documentos em memória (base do IDF de
+        /// desempate na busca). Informe <paramref name="documentId"/> para
+        /// deduplicar hashes do mesmo documento.
         /// </summary>
-        public TextHashResult ProcessText(string title, string body = null)
+        public TextHashResult ProcessText(string title, string body = null, int? documentId = null)
         {
-            return _engine.ProcessText(title, body);
+            return _engine.ProcessText(title, body, documentId);
         }
 
         /// <summary>Extrai hashes de um texto usando as features atuais.</summary>
@@ -123,7 +126,8 @@ namespace Rochas.CacheIndexer
 
         /// <summary>
         /// Busca no índice (segundo maior score, escopado por segmento quando informado).
-        /// Título casado conta como <c>TitleWeight</c>, corpo como <c>BodyWeight</c>.
+        /// Critério de obtenção: cobertura de palavras (maximo de termos da expressao);
+        /// critério de ranking: IDF por termo (quanto menos registros o hash aponta, maior o peso).
         /// </summary>
         public IndexSearchResult SearchIndex(uint[] queryHashes, double minMatchScore = 0.3, int? segmentId = null)
         {
