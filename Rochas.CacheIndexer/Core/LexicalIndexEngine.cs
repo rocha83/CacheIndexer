@@ -179,7 +179,9 @@ namespace Rochas.CacheIndexer.Core
 
             if (!string.IsNullOrWhiteSpace(keywordsStr))
             {
-                var tokens = keywordsStr.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                var tokens = keywordsStr.Tokenize();
+                if (tokens == null || tokens.Length == 0)
+                    tokens = keywordsStr.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var token in tokens)
                 {
                     ProcessToken(token.Trim(), hashesSet);
