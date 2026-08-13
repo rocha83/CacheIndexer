@@ -2,17 +2,17 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Rochas.CacheIndexer.Providers;
-using Rochas.DapperRepository.Specification.Interfaces;
+using Rochas.Data.Specification.Interfaces;
 
 namespace Rochas.CacheIndexer.Helpers
 {
     /// <summary>
     /// Despachador de mensagens do canal de persistência para um banco de dados,
-    /// usando a interface IGenericRepository&lt;T&gt; (Rochas.DapperRepository.Specification).
+    /// usando a interface IPersistenceRepository&lt;T&gt; (Rochas.Data.Specification).
     ///
     /// Mapeamento de ações:
-    ///   - Put   → IGenericRepository.Add(entity)      (replicar escrita no slave)
-    ///   - Del   → IGenericRepository.Remove(filter)   (remover por filtro de chave)
+    ///   - Put   → IPersistenceRepository.Add(entity)     (replicar escrita no slave)
+    ///   - Del   → IPersistenceRepository.Remove(filter)  (remover por filtro de chave)
     ///   - Clear → não suportado pela interface (lance NotSupportedException)
     ///
     /// O método DispatchAsync é virtual: para replicação idempotente (upsert) ou
@@ -20,9 +20,9 @@ namespace Rochas.CacheIndexer.Helpers
     /// </summary>
     public class DataDispatcher<T> where T : class
     {
-        private readonly IGenericRepository<T> _repository;
+        private readonly IPersistenceRepository<T> _repository;
 
-        public DataDispatcher(IGenericRepository<T> repository)
+        public DataDispatcher(IPersistenceRepository<T> repository)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         }
@@ -44,14 +44,14 @@ namespace Rochas.CacheIndexer.Helpers
                 case PersistenceChannelCacheProvider.ChannelAction.Del:
                     if (msg.DeleteAll)
                         throw new NotSupportedException(
-                            "DeleteAll não é suportado por IGenericRepository (requer TRUNCATE). " +
+                            "DeleteAll não é suportado por IPersistenceRepository (requer TRUNCATE). " +
                             "Sobrescreva DispatchAsync para um comportamento customizado.");
                     await _repository.Remove((T)msg.CacheKey).ConfigureAwait(false);
                     break;
 
                 case PersistenceChannelCacheProvider.ChannelAction.Clear:
                     throw new NotSupportedException(
-                        "Clear não é suportado por IGenericRepository (requer limpeza global). " +
+                        "Clear não é suportado por IPersistenceRepository (requer limpeza global). " +
                         "Sobrescreva DispatchAsync para um comportamento customizado.");
             }
         }

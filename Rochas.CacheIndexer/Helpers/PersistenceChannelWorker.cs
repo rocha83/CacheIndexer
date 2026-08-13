@@ -11,7 +11,7 @@ namespace Rochas.CacheIndexer.Helpers
     /// <summary>
     /// Worker Background Service (Microsoft.Extensions.Hosting) que consome o canal
     /// de persistência e replica cada evento em um SGDB via DataDispatcher&lt;T&gt;
-    /// (IGenericRepository&lt;T&gt; do Rochas.DapperRepository.Specification).
+    /// (IPersistenceRepository&lt;T&gt; do Rochas.Data.Specification).
     ///
     /// Registro em ASP.NET Core (DI):
     ///   services.AddSingleton(provider);

@@ -231,11 +231,11 @@ Backpressure: canais bounded (`Wait`); um consumidor lento além da capacidade d
 Para persistir os eventos do canal em um SGDB sem escrever o `foreach` na mão,
 use o **`PersistenceChannelWorker<T>`** (`BackgroundService` de
 `Microsoft.Extensions.Hosting`) + **`DataDispatcher<T>`**, que conecta no banco
-via `IGenericRepository<T>` (interface do `Rochas.DapperRepository.Specification`).
+via `IPersistenceRepository<T>` (interface base do `Rochas.Data.Specification`).
 
 ```csharp
 using Rochas.CacheIndexer.Helpers;
-using Rochas.DapperRepository.Specification.Interfaces;
+using Rochas.Data.Specification.Interfaces;
 using Rochas.DapperRepository;
 
 // Master publica no canal (como antes):
@@ -252,7 +252,7 @@ builder.Services.AddHostedService(sp =>
 
 Mapeamento de ações no `DataDispatcher<T>`:
 
-| Ação do canal | Chamada no `IGenericRepository<T>` |
+| Ação do canal | Chamada no `IPersistenceRepository<T>` |
 |---|---|
 | `Put` | `Add(entity)` |
 | `Del` | `Remove(filter)` |
