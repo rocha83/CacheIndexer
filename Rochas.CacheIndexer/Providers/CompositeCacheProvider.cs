@@ -1,4 +1,5 @@
 using System;
+using Rochas.Data.Specification.Interfaces;
 
 namespace Rochas.CacheIndexer.Providers
 {
