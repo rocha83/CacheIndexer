@@ -1,6 +1,6 @@
 # Rochas.CacheIndexer
 
-[English](#english) | [Português](#português) | [Español](#español) | [Deutsch](#deutsch) | [Français](#français)
+[English](#english) | [Português](#português) | [Español](#español) | [Français](#français) | [Deutsch](#deutsch)
 
 ---
 
@@ -811,275 +811,6 @@ GPL v2 — libre para uso comercial y personal.
 
 ---
 
-## Deutsch
-
-In-Memory-invertierter lexikalischer Index für die Suche nach Wissen/Antworten mit Hash-Cache, Segmentierung pro Segment und **ein-/ausschaltbaren Normalisierungsfunktionen**, plus **ansteckbare Objekt-Cache-Anbieter** (In-Memory, verteilt Redis/Garnet, zusammengesetzt und ereignisbasierte Persistenz):
-
-- **Synonyme** — eingebettetes PT-BR-Wörterbuch (`pt_br_synonyms.json`) oder benutzerdefiniert;
-- **Stemming** — Porter-Stemmer für PT-BR (`Rochas.PTStemmer`);
-- **Soundex** — phonetischer Soundex-Filter, angepasst an PT-BR;
-- **Objekt-Cache** — `ICacheProvider` mit `InMemoryCacheProvider`, `DistributedCacheProvider` (Redis/Garnet), `CompositeCacheProvider` (L1+L2) und `PersistenceChannelCacheProvider` (asynchrone ereignisbasierte Replikation auf 1+ Datenbanken).
-
-Basiert auf `Rochas.PTStemmer` und `Rochas.Extensions`, kompatibel mit **.NET Standard 2.1+**.
-
-### Installation
-
-```bash
-dotnet add package Rochas.CacheIndexer
-```
-
-### Schnellstart
-
-```csharp
-using Rochas.CacheIndexer;
-using Rochas.CacheIndexer.Helpers;
-
-var indexer = new CacheIndexer(new CacheIndexerConfig
-{
-    EnableStemming = false,
-    EnablePhoneticFilter = false,
-    EnableSynonyms = true,
-    MinMatchScore = 0.3
-});
-
-// Lädt den Index aus den Dokumenten
-await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
-
-// Progressive Suche: base -> Synonyme -> Stemming -> Soundex
-var result = await indexer.FindBestMatch("quero emitir uma fatura", loadDocs);
-if (result.Found)
-    Console.WriteLine($"Bestes Doc: {result.BestId} (Score {result.Score:F2}, Tier {result.Tier})");
-```
-
-### Funktionen ein-/ausschalten
-
-#### Über Eigenschaften
-
-```csharp
-indexer.EnableStemming = true;        // radikalisiert Begriffe vor dem Hashing
-indexer.EnablePhoneticFilter = true;  // fügt phonetischen Hash hinzu (PT-BR Soundex)
-indexer.EnableSynonyms = false;       // deaktiviert das Synonymwörterbuch
-```
-
-#### Über Flag-Enum (alles auf einmal)
-
-```csharp
-using Rochas.CacheIndexer.Enumerators;
-
-indexer.SetFeatures(CacheIndexerFeature.All);                    // Synonyme + Stemming + Phonetik
-indexer.SetFeatures(CacheIndexerFeature.None);                   // alles aus
-indexer.SetFeatures(CacheIndexerFeature.Synonyms | CacheIndexerFeature.Phonetic);
-```
-
-#### Praktischer Effekt
-
-| Funktion | Verhalten | Beispiel |
-|---|---|---|
-| `Synonyms` | `fatura` erweitert sich zu `boleto`, `duplicata`, `cobranca`... | Suche nach "boleto" findet "fatura" |
-| `Stemming` | `pagamentos` -> `pagament` == `pagamento` -> `pagament` | Suche nach "pagamentos" findet "pagamento" |
-| `Phonetic` | `casa` und `caza` erzeugen denselben Soundex-Code (`C200`) | toleriert Tippfehler/ähnliche Laute |
-
-### Haupt-API
-
-| Methode | Beschreibung |
-|---|---|
-| `EnsureIndexLoaded(loader)` | Baut den invertierten Index (Hash -> ids) und berechnet die Dokumentfrequenz (IDF) |
-| `SearchIndex(query, minMatchScore, segmentId?)` | Suche im Index: Wortabdeckung + IDF-Ranking |
-| `Search(documents, query, minMatchScore)` | Direkte Suche über eine Sammlung (ohne vorherige Indexierung) |
-| `FindBestMatch(message, loader, segmentId?)` | Progressive Suche über 4 Tiers, vom präzisesten zum permissivsten |
-| `ProcessText(title, body, documentId?)` | Tokenisiert, hasht und aktualisiert die In-Memory-Frequenz (Grundlage für IDF) |
-| `ExtractHashes(text)` / `ExtractHashes(text, syn, stem, sx)` | Extrahiert Hashes aus einem Text |
-| `InvalidateIndex()` | Leert den Index und erzwingt eine Neuindexierung bei der nächsten Verwendung |
-| `SetFeatures` / `GetFeatures` | Schaltet Funktionen gemeinsam um |
-
-### Relevanzstrategie (Abdeckung + Ranking)
-
-Zwei kombinierte Kriterien bei der Suche:
-
-1. **Abdeckung (Abruf)** — gewonnen hat der Inhalt, der mit der **maximalen Anzahl unterschiedlicher Wörter** der Abfrage übereinstimmt. `Score = übereinstimmende Wörter / Abfragewörter`.
-
-2. **Ranking (Tie-Break per IDF)** — die **Dokumentfrequenz** wird in einem **In-Memory-Wörterbuch** gehalten und **während `ProcessText`** aktualisiert: Je weniger Datensätze ein Hash/Wort referenziert, desto höher sein Gewicht (`idf = ln(1 + N / (1 + df))`). Der Tie-Break wird **zum Zeitpunkt der Suche** mit der aktuellen Frequenz berechnet.
-
-Bei Gleichstand in der Abdeckung gewinnt, wer die selteneren Begriffe hat; als letzte Instanz der kleinste `Id`.
-
-```
-Doc A: "fatura, boleto"          <- Begriff "cancelamento" ist im Index selten
-Doc B: "cancelamento"            <- nur 1 (seltenes) Wort gematcht
-
-query: "fatura boleto cancelamento"
--> Doc A gewinnt (2/3 Wörter), selbst bei niedrigerem IDF pro Begriff
--> Doc B gewinnt nur bei Abdeckungsgleichstand (1/1 x 1/1) und seltenerem Begriff
-```
-
-Da die Frequenz im In-Memory-Wörterbuch lebt, verändert Runtime-Lernen das Ranking ohne Neuindexierung:
-
-```csharp
-indexer.ProcessText("fatura", null, documentId: 42); // erhöht df("fatura") im Speicher
-// die nächste Suche berechnet das IDF von "fatura" bereits im Tie-Break neu
-```
-
-> `TitleWeight`/`BodyWeight` wurden eingestellt (feste Gewichte pro Feld spiegeln Seltenheit nicht wider).
-
-### Konfiguration (CacheIndexerConfig)
-
-```csharp
-var config = new CacheIndexerConfig
-{
-    EnableStemming = false,
-    EnablePhoneticFilter = false,
-    EnableSynonyms = true,
-    SynonymsFilePath = "custom_synonyms.json",   // benutzerdefinierter Pfad (optional)
-    LoadEmbeddedSynonyms = true,                 // Fallback: eingebettetes Wörterbuch
-    MinMatchScore = 0.3
-};
-```
-
-### Objekt-Cache (ICacheProvider)
-
-Objekte/POCOs mit ansteckbaren Anbietern cachen, entkoppelt von konkreten Implementierungen. Die statische Fassade `DataCache` bündelt den Zugriff:
-
-```csharp
-using Rochas.CacheIndexer.Providers;
-
-// Einmalige Initialisierung (App-Start):
-DataCache.Initialize(new InMemoryCacheProvider());                              // default
-DataCache.Initialize(memorySizeLimit: 100);                                     // In-Memory auf 100 MB begrenzt
-DataCache.Initialize(new DistributedCacheProvider("localhost:6379"));           // Redis/Garnet
-DataCache.Initialize(new CompositeCacheProvider(                                 // L1 + L2
-    new InMemoryCacheProvider(),
-    new DistributedCacheProvider("localhost:6379")));
-DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider())); // master
-
-// Verwendung:
-DataCache.Put(new Product { Id = 1 }, product);
-var product = DataCache.Get(new Product { Id = 1 });
-DataCache.Del(new Product { Id = 1 }, deleteAll: true);
-DataCache.Clear();
-```
-
-#### Anbieter
-
-| Anbieter | Beschreibung | Verwenden, wenn |
-|---|---|---|
-| `InMemoryCacheProvider` | Thread-sicheres `ConcurrentDictionary`, Schlüssel = FNV-Hash des Typs + JSON-Schlüssel | Entwicklung, kleine Kataloge, L1 |
-| `DistributedCacheProvider` | `IDistributedCache` — **Redis** oder **Microsoft Garnet** | Multi-Instanz/Pods, hohe Verfügbarkeit |
-| `CompositeCacheProvider` | L1 In-Memory + L2 verteilt, Write-through und **L2→L1-Promotion** beim Lesen | Latenz + Freigabe |
-| `PersistenceChannelCacheProvider` | asynchroner Kanal pro Abonnent (echtes Fan-out via `Subscribe`), Verbraucher persistieren auf 1+ Datenbanken | Master→Slave-Ereignisreplikation |
-
-#### Typische Pipeline
-
-```
-L1 In-Memory (Mikrosekunden) → L2 verteilt Redis/Garnet (Millisekunden) → SQL-Datenbank
-```
-
-- **Lesen** im Composite: versucht L1 → bei Miss L2 lesen und nach L1 befördern (ab der ersten Lektüre wird das Element aus dem Speicher bedient);
-- **Schreiben** im Composite: L1 und L2 zusammen (Write-through).
-
-#### Verteilte Cache (Redis / Garnet)
-
-`DistributedCacheProvider` nutzt die Abstraktion `IDistributedCache` — funktioniert mit jeder kompatiblen Implementierung. Für ASP.NET Core (Dependency Injection):
-
-```csharp
-// Program.cs
-builder.Services.AddStackExchangeRedisCache(o =>
-{
-    o.Configuration = builder.Configuration.GetConnectionString("Redis");
-    o.InstanceName = "cache:";
-});
-
-DataCache.Initialize(new DistributedCacheProvider(
-    cache, instanceName: "cache:", defaultExpiration: TimeSpan.FromMinutes(5)));
-```
-
-**Microsoft Garnet** ist ein Redis-kompatibler Server; einfach den Redis-Client auf den Garnet-Endpunkt richten — der `DistributedCacheProvider` funktioniert unverändert.
-
-#### Ereignisbasierte Persistenz (Master → 1+ Datenbanken)
-
-Der Master schreibt in den lokalen Cache und veröffentlicht im Kanal; jeder Verbraucher (Slave) abonniert und erhält eine **Kopie** jedes Ereignisses (privater Kanal pro Abonnent — echtes Fan-out):
-
-```csharp
-// Slave A (DB A):
-var readerA = provider.Subscribe(capacity: 1000);
-await foreach (var msg in readerA.ReadAllAsync())
-{
-    switch (msg.Action)
-    {
-        case PersistenceChannelCacheProvider.ChannelAction.Put:
-            await repoA.AddAsync(msg.CacheItem);      // DB A
-            break;
-        case PersistenceChannelCacheProvider.ChannelAction.Del:
-            await repoA.RemoveAsync(msg.CacheKey);    // DB B
-            break;
-        case PersistenceChannelCacheProvider.ChannelAction.Clear:
-            await repoA.ClearAsync();
-            break;
-    }
-}
-
-// Slave B (DB B): identisches Abo, ohne Slave A zu beeinflussen.
-```
-
-Komfort für einen einzelnen Verbraucher: `await foreach (var msg in provider.Consume(ct))`.
-
-Backpressure: gebundene Kanäle (`Wait`); ein langsamer Verbraucher über der Kapazität verwirft Ereignisse nur für sich selbst. `Subscribe(capacity <= 0)` erzeugt einen unbegrenzten Kanal (keine Verluste).
-
-#### Automatische DB-Replikation (Background Worker + DataDispatcher)
-
-Um Kanalereignisse ohne manuelles `foreach` in einer Datenbank zu persistieren, verwende **`PersistenceChannelWorker<T>`** (`BackgroundService` aus `Microsoft.Extensions.Hosting`) + **`DataDispatcher<T>`**, das über `IGenericRepository<T>` (Schnittstelle aus `Rochas.DapperRepository.Specification`) mit der Datenbank verbindet.
-
-```csharp
-using Rochas.CacheIndexer.Helpers;
-using Rochas.DapperRepository.Specification.Interfaces;
-using Rochas.DapperRepository;
-
-// Master veröffentlicht im Kanal (wie zuvor):
-DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider()));
-
-// Slave: Worker im DI registrieren (Konsum + Persistenz in der Slave-DB):
-var slaveRepo = new GenericRepository<Product>(DatabaseEngine.SQLite, slaveConnString);
-var dispatcher = new DataDispatcher<Product>(slaveRepo);
-
-// ASP.NET Core:
-builder.Services.AddHostedService(sp =>
-    new PersistenceChannelWorker<Product>(channelProvider, dispatcher));
-```
-
-Aktionszuordnung in `DataDispatcher<T>`:
-
-| Kanalaktion | Aufruf auf `IGenericRepository<T>` |
-|---|---|
-| `Put` | `Add(entity)` |
-| `Del` | `Remove(filter)` |
-| `Clear` / `Del(deleteAll: true)` | `NotSupportedException` (Schnittstelle bietet keine globale Bereinigung) |
-
-`DispatchAsync` ist `virtual` — für idempotente Replikation (Upsert) oder `DeleteAll`/`Clear`-Unterstützung im Verbraucher überschreiben. Fehler pro Nachricht werden protokolliert und der Konsum läuft weiter.
-
-#### Cachebare Entität markieren
-
-```csharp
-using Rochas.CacheIndexer.Annotations;
-using Rochas.CacheIndexer.Providers;
-
-[Cacheable(typeof(InMemoryCacheProvider))]
-public class Product
-{
-    public int Id { get; set; }
-    public string Name { get; set; }
-}
-```
-
-### Tests und Abdeckung
-
-Suite mit **106 Tests** (xUnit + FluentAssertions), die **95,69 % Zeilenabdeckung** (866/905) und **88,14 % Branch** in der Assembly `Rochas.CacheIndexer` misst (coverlet + XPlat Code Coverage, nur auf `Rochas.CacheIndexer.dll` gefiltert). Die meisten Komponenten erreichen 100 % (`CacheIndexer` + `FindBestMatch`, `CompositeCacheProvider`, `DataCache`, `DistributedCacheProvider`, `PersistenceChannelCacheProvider`, `DataDispatcher<T>`, `PersistenceChannelWorker<T>`); `InMemoryCacheProvider` 97 %, `LexicalIndexEngine` 92 % und `PhoneticFilter` 91 %.
-
-Szenarioabdeckung: Suche mit Wortabdeckung + IDF, Tie-Break per In-Memory-Frequenz, Suche nach Body/Segment, vorberechnete Hashes, alle Cache-Anbieter und Dispatcher/Worker mit Fehler pro Nachricht (Log + Kontinuität).
-
-### Lizenz
-
-GPL v2 — frei für kommerzielle und private Nutzung.
-
----
-
 ## Français
 
 Index lexical inversé en mémoire pour la recherche de connaissances/réponses avec cache de hachages, ségrégation par segment et **fonctionnalités de normalisation activables/désactivables**, plus des **fournisseurs de cache d'objets** enfichables (en mémoire, distribué Redis/Garnet, composite et persistance par événement) :
@@ -1346,3 +1077,272 @@ Couverture par scénario : recherche avec couverture de mots + IDF, départage p
 ### Licence
 
 GPL v2 — libre pour un usage commercial et personnel.
+
+---
+
+## Deutsch
+
+In-Memory-invertierter lexikalischer Index für die Suche nach Wissen/Antworten mit Hash-Cache, Segmentierung pro Segment und **ein-/ausschaltbaren Normalisierungsfunktionen**, plus **ansteckbare Objekt-Cache-Anbieter** (In-Memory, verteilt Redis/Garnet, zusammengesetzt und ereignisbasierte Persistenz):
+
+- **Synonyme** — eingebettetes PT-BR-Wörterbuch (`pt_br_synonyms.json`) oder benutzerdefiniert;
+- **Stemming** — Porter-Stemmer für PT-BR (`Rochas.PTStemmer`);
+- **Soundex** — phonetischer Soundex-Filter, angepasst an PT-BR;
+- **Objekt-Cache** — `ICacheProvider` mit `InMemoryCacheProvider`, `DistributedCacheProvider` (Redis/Garnet), `CompositeCacheProvider` (L1+L2) und `PersistenceChannelCacheProvider` (asynchrone ereignisbasierte Replikation auf 1+ Datenbanken).
+
+Basiert auf `Rochas.PTStemmer` und `Rochas.Extensions`, kompatibel mit **.NET Standard 2.1+**.
+
+### Installation
+
+```bash
+dotnet add package Rochas.CacheIndexer
+```
+
+### Schnellstart
+
+```csharp
+using Rochas.CacheIndexer;
+using Rochas.CacheIndexer.Helpers;
+
+var indexer = new CacheIndexer(new CacheIndexerConfig
+{
+    EnableStemming = false,
+    EnablePhoneticFilter = false,
+    EnableSynonyms = true,
+    MinMatchScore = 0.3
+});
+
+// Lädt den Index aus den Dokumenten
+await indexer.EnsureIndexLoaded(() => Task.FromResult<IReadOnlyList<IndexedDocument>>(docs));
+
+// Progressive Suche: base -> Synonyme -> Stemming -> Soundex
+var result = await indexer.FindBestMatch("quero emitir uma fatura", loadDocs);
+if (result.Found)
+    Console.WriteLine($"Bestes Doc: {result.BestId} (Score {result.Score:F2}, Tier {result.Tier})");
+```
+
+### Funktionen ein-/ausschalten
+
+#### Über Eigenschaften
+
+```csharp
+indexer.EnableStemming = true;        // radikalisiert Begriffe vor dem Hashing
+indexer.EnablePhoneticFilter = true;  // fügt phonetischen Hash hinzu (PT-BR Soundex)
+indexer.EnableSynonyms = false;       // deaktiviert das Synonymwörterbuch
+```
+
+#### Über Flag-Enum (alles auf einmal)
+
+```csharp
+using Rochas.CacheIndexer.Enumerators;
+
+indexer.SetFeatures(CacheIndexerFeature.All);                    // Synonyme + Stemming + Phonetik
+indexer.SetFeatures(CacheIndexerFeature.None);                   // alles aus
+indexer.SetFeatures(CacheIndexerFeature.Synonyms | CacheIndexerFeature.Phonetic);
+```
+
+#### Praktischer Effekt
+
+| Funktion | Verhalten | Beispiel |
+|---|---|---|
+| `Synonyms` | `fatura` erweitert sich zu `boleto`, `duplicata`, `cobranca`... | Suche nach "boleto" findet "fatura" |
+| `Stemming` | `pagamentos` -> `pagament` == `pagamento` -> `pagament` | Suche nach "pagamentos" findet "pagamento" |
+| `Phonetic` | `casa` und `caza` erzeugen denselben Soundex-Code (`C200`) | toleriert Tippfehler/ähnliche Laute |
+
+### Haupt-API
+
+| Methode | Beschreibung |
+|---|---|
+| `EnsureIndexLoaded(loader)` | Baut den invertierten Index (Hash -> ids) und berechnet die Dokumentfrequenz (IDF) |
+| `SearchIndex(query, minMatchScore, segmentId?)` | Suche im Index: Wortabdeckung + IDF-Ranking |
+| `Search(documents, query, minMatchScore)` | Direkte Suche über eine Sammlung (ohne vorherige Indexierung) |
+| `FindBestMatch(message, loader, segmentId?)` | Progressive Suche über 4 Tiers, vom präzisesten zum permissivsten |
+| `ProcessText(title, body, documentId?)` | Tokenisiert, hasht und aktualisiert die In-Memory-Frequenz (Grundlage für IDF) |
+| `ExtractHashes(text)` / `ExtractHashes(text, syn, stem, sx)` | Extrahiert Hashes aus einem Text |
+| `InvalidateIndex()` | Leert den Index und erzwingt eine Neuindexierung bei der nächsten Verwendung |
+| `SetFeatures` / `GetFeatures` | Schaltet Funktionen gemeinsam um |
+
+### Relevanzstrategie (Abdeckung + Ranking)
+
+Zwei kombinierte Kriterien bei der Suche:
+
+1. **Abdeckung (Abruf)** — gewonnen hat der Inhalt, der mit der **maximalen Anzahl unterschiedlicher Wörter** der Abfrage übereinstimmt. `Score = übereinstimmende Wörter / Abfragewörter`.
+
+2. **Ranking (Tie-Break per IDF)** — die **Dokumentfrequenz** wird in einem **In-Memory-Wörterbuch** gehalten und **während `ProcessText`** aktualisiert: Je weniger Datensätze ein Hash/Wort referenziert, desto höher sein Gewicht (`idf = ln(1 + N / (1 + df))`). Der Tie-Break wird **zum Zeitpunkt der Suche** mit der aktuellen Frequenz berechnet.
+
+Bei Gleichstand in der Abdeckung gewinnt, wer die selteneren Begriffe hat; als letzte Instanz der kleinste `Id`.
+
+```
+Doc A: "fatura, boleto"          <- Begriff "cancelamento" ist im Index selten
+Doc B: "cancelamento"            <- nur 1 (seltenes) Wort gematcht
+
+query: "fatura boleto cancelamento"
+-> Doc A gewinnt (2/3 Wörter), selbst bei niedrigerem IDF pro Begriff
+-> Doc B gewinnt nur bei Abdeckungsgleichstand (1/1 x 1/1) und seltenerem Begriff
+```
+
+Da die Frequenz im In-Memory-Wörterbuch lebt, verändert Runtime-Lernen das Ranking ohne Neuindexierung:
+
+```csharp
+indexer.ProcessText("fatura", null, documentId: 42); // erhöht df("fatura") im Speicher
+// die nächste Suche berechnet das IDF von "fatura" bereits im Tie-Break neu
+```
+
+> `TitleWeight`/`BodyWeight` wurden eingestellt (feste Gewichte pro Feld spiegeln Seltenheit nicht wider).
+
+### Konfiguration (CacheIndexerConfig)
+
+```csharp
+var config = new CacheIndexerConfig
+{
+    EnableStemming = false,
+    EnablePhoneticFilter = false,
+    EnableSynonyms = true,
+    SynonymsFilePath = "custom_synonyms.json",   // benutzerdefinierter Pfad (optional)
+    LoadEmbeddedSynonyms = true,                 // Fallback: eingebettetes Wörterbuch
+    MinMatchScore = 0.3
+};
+```
+
+### Objekt-Cache (ICacheProvider)
+
+Objekte/POCOs mit ansteckbaren Anbietern cachen, entkoppelt von konkreten Implementierungen. Die statische Fassade `DataCache` bündelt den Zugriff:
+
+```csharp
+using Rochas.CacheIndexer.Providers;
+
+// Einmalige Initialisierung (App-Start):
+DataCache.Initialize(new InMemoryCacheProvider());                              // default
+DataCache.Initialize(memorySizeLimit: 100);                                     // In-Memory auf 100 MB begrenzt
+DataCache.Initialize(new DistributedCacheProvider("localhost:6379"));           // Redis/Garnet
+DataCache.Initialize(new CompositeCacheProvider(                                 // L1 + L2
+    new InMemoryCacheProvider(),
+    new DistributedCacheProvider("localhost:6379")));
+DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider())); // master
+
+// Verwendung:
+DataCache.Put(new Product { Id = 1 }, product);
+var product = DataCache.Get(new Product { Id = 1 });
+DataCache.Del(new Product { Id = 1 }, deleteAll: true);
+DataCache.Clear();
+```
+
+#### Anbieter
+
+| Anbieter | Beschreibung | Verwenden, wenn |
+|---|---|---|
+| `InMemoryCacheProvider` | Thread-sicheres `ConcurrentDictionary`, Schlüssel = FNV-Hash des Typs + JSON-Schlüssel | Entwicklung, kleine Kataloge, L1 |
+| `DistributedCacheProvider` | `IDistributedCache` — **Redis** oder **Microsoft Garnet** | Multi-Instanz/Pods, hohe Verfügbarkeit |
+| `CompositeCacheProvider` | L1 In-Memory + L2 verteilt, Write-through und **L2→L1-Promotion** beim Lesen | Latenz + Freigabe |
+| `PersistenceChannelCacheProvider` | asynchroner Kanal pro Abonnent (echtes Fan-out via `Subscribe`), Verbraucher persistieren auf 1+ Datenbanken | Master→Slave-Ereignisreplikation |
+
+#### Typische Pipeline
+
+```
+L1 In-Memory (Mikrosekunden) → L2 verteilt Redis/Garnet (Millisekunden) → SQL-Datenbank
+```
+
+- **Lesen** im Composite: versucht L1 → bei Miss L2 lesen und nach L1 befördern (ab der ersten Lektüre wird das Element aus dem Speicher bedient);
+- **Schreiben** im Composite: L1 und L2 zusammen (Write-through).
+
+#### Verteilte Cache (Redis / Garnet)
+
+`DistributedCacheProvider` nutzt die Abstraktion `IDistributedCache` — funktioniert mit jeder kompatiblen Implementierung. Für ASP.NET Core (Dependency Injection):
+
+```csharp
+// Program.cs
+builder.Services.AddStackExchangeRedisCache(o =>
+{
+    o.Configuration = builder.Configuration.GetConnectionString("Redis");
+    o.InstanceName = "cache:";
+});
+
+DataCache.Initialize(new DistributedCacheProvider(
+    cache, instanceName: "cache:", defaultExpiration: TimeSpan.FromMinutes(5)));
+```
+
+**Microsoft Garnet** ist ein Redis-kompatibler Server; einfach den Redis-Client auf den Garnet-Endpunkt richten — der `DistributedCacheProvider` funktioniert unverändert.
+
+#### Ereignisbasierte Persistenz (Master → 1+ Datenbanken)
+
+Der Master schreibt in den lokalen Cache und veröffentlicht im Kanal; jeder Verbraucher (Slave) abonniert und erhält eine **Kopie** jedes Ereignisses (privater Kanal pro Abonnent — echtes Fan-out):
+
+```csharp
+// Slave A (DB A):
+var readerA = provider.Subscribe(capacity: 1000);
+await foreach (var msg in readerA.ReadAllAsync())
+{
+    switch (msg.Action)
+    {
+        case PersistenceChannelCacheProvider.ChannelAction.Put:
+            await repoA.AddAsync(msg.CacheItem);      // DB A
+            break;
+        case PersistenceChannelCacheProvider.ChannelAction.Del:
+            await repoA.RemoveAsync(msg.CacheKey);    // DB B
+            break;
+        case PersistenceChannelCacheProvider.ChannelAction.Clear:
+            await repoA.ClearAsync();
+            break;
+    }
+}
+
+// Slave B (DB B): identisches Abo, ohne Slave A zu beeinflussen.
+```
+
+Komfort für einen einzelnen Verbraucher: `await foreach (var msg in provider.Consume(ct))`.
+
+Backpressure: gebundene Kanäle (`Wait`); ein langsamer Verbraucher über der Kapazität verwirft Ereignisse nur für sich selbst. `Subscribe(capacity <= 0)` erzeugt einen unbegrenzten Kanal (keine Verluste).
+
+#### Automatische DB-Replikation (Background Worker + DataDispatcher)
+
+Um Kanalereignisse ohne manuelles `foreach` in einer Datenbank zu persistieren, verwende **`PersistenceChannelWorker<T>`** (`BackgroundService` aus `Microsoft.Extensions.Hosting`) + **`DataDispatcher<T>`**, das über `IGenericRepository<T>` (Schnittstelle aus `Rochas.DapperRepository.Specification`) mit der Datenbank verbindet.
+
+```csharp
+using Rochas.CacheIndexer.Helpers;
+using Rochas.DapperRepository.Specification.Interfaces;
+using Rochas.DapperRepository;
+
+// Master veröffentlicht im Kanal (wie zuvor):
+DataCache.Initialize(new PersistenceChannelCacheProvider(new InMemoryCacheProvider()));
+
+// Slave: Worker im DI registrieren (Konsum + Persistenz in der Slave-DB):
+var slaveRepo = new GenericRepository<Product>(DatabaseEngine.SQLite, slaveConnString);
+var dispatcher = new DataDispatcher<Product>(slaveRepo);
+
+// ASP.NET Core:
+builder.Services.AddHostedService(sp =>
+    new PersistenceChannelWorker<Product>(channelProvider, dispatcher));
+```
+
+Aktionszuordnung in `DataDispatcher<T>`:
+
+| Kanalaktion | Aufruf auf `IGenericRepository<T>` |
+|---|---|
+| `Put` | `Add(entity)` |
+| `Del` | `Remove(filter)` |
+| `Clear` / `Del(deleteAll: true)` | `NotSupportedException` (Schnittstelle bietet keine globale Bereinigung) |
+
+`DispatchAsync` ist `virtual` — für idempotente Replikation (Upsert) oder `DeleteAll`/`Clear`-Unterstützung im Verbraucher überschreiben. Fehler pro Nachricht werden protokolliert und der Konsum läuft weiter.
+
+#### Cachebare Entität markieren
+
+```csharp
+using Rochas.CacheIndexer.Annotations;
+using Rochas.CacheIndexer.Providers;
+
+[Cacheable(typeof(InMemoryCacheProvider))]
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+### Tests und Abdeckung
+
+Suite mit **106 Tests** (xUnit + FluentAssertions), die **95,69 % Zeilenabdeckung** (866/905) und **88,14 % Branch** in der Assembly `Rochas.CacheIndexer` misst (coverlet + XPlat Code Coverage, nur auf `Rochas.CacheIndexer.dll` gefiltert). Die meisten Komponenten erreichen 100 % (`CacheIndexer` + `FindBestMatch`, `CompositeCacheProvider`, `DataCache`, `DistributedCacheProvider`, `PersistenceChannelCacheProvider`, `DataDispatcher<T>`, `PersistenceChannelWorker<T>`); `InMemoryCacheProvider` 97 %, `LexicalIndexEngine` 92 % und `PhoneticFilter` 91 %.
+
+Szenarioabdeckung: Suche mit Wortabdeckung + IDF, Tie-Break per In-Memory-Frequenz, Suche nach Body/Segment, vorberechnete Hashes, alle Cache-Anbieter und Dispatcher/Worker mit Fehler pro Nachricht (Log + Kontinuität).
+
+### Lizenz
+
+GPL v2 — frei für kommerzielle und private Nutzung.
