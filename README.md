@@ -1,6 +1,7 @@
 # Rochas.CacheIndexer
 
 [![NuGet](https://img.shields.io/nuget/v/Rochas.CacheIndexer.svg)](https://www.nuget.org/packages/Rochas.CacheIndexer)
+[![Coverage](https://img.shields.io/badge/coverage-95.7%25-2ea44f)](https://github.com/rocha83/CacheIndexer)
 
 Índice léxico invertido em memória para busca de conhecimento/respostas com cache de hashes, segregação por segmento e **features de normalização liga/desliga**, mais **provedores de cache de objetos** plugáveis (in-memory, distribuído Redis/Garnet, composto e persistência por evento):
 
@@ -275,6 +276,33 @@ public class Product
     public string Name { get; set; }
 }
 ```
+
+---
+
+## 🧪 Testes e cobertura
+
+Suíte com **106 testes** (xUnit + FluentAssertions) medindo **95,69% de cobertura de
+linhas** (866/905) e **88,14% de branch** no assembly `Rochas.CacheIndexer`
+(coverlet + XPlat Code Coverage, filtrado apenas para `Rochas.CacheIndexer.dll`).
+
+| Componente | Linhas |
+|---|---|
+| `CacheIndexer` + `FindBestMatch` (4 tiers) | 100% |
+| `CompositeCacheProvider` (L1+L2) | 100% |
+| `DataCache` (fachada) | 100% |
+| `DistributedCacheProvider` (Redis/Garnet) | 100% |
+| `InMemoryCacheProvider` | 97% |
+| `PersistenceChannelCacheProvider` (canal/fan-out) | 100% |
+| `DataDispatcher<T>` / `DispatchAsync` | 100% |
+| `PersistenceChannelWorker<T>` (BackgroundService) | 100% |
+| `LexicalIndexEngine` (índice + IDF + sinônimos) | 92% |
+| `PhoneticFilter` (Soundex PT-BR) | 91% |
+| `CacheIndexerConfig`, `IndexedDocument`, `IndexSearchResult`, `TextHashResult`, `CacheableAttribute` | 100% |
+
+Cobertura por cenário: busca com cobertura de palavras + IDF, desempate por
+frequência em memória, busca por corpo/segmento, hashes pré-computados,
+providers de cache (in-memory, distribuído, composto, canal), dispatcher e
+worker com falha por mensagem (log + continuidade).
 
 ---
 

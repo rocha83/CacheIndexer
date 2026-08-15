@@ -112,6 +112,37 @@ namespace Rochas.CacheIndexer.Tests
             provider.Get(new { Id = 1 }).Should().BeNull();
         }
 
+        [Fact]
+        public void InMemory_SingleElementList_IsUnwrappedOnGet()
+        {
+            var provider = new InMemoryCacheProvider();
+            provider.Put(new { Id = 1 }, new List<string> { "unico" });
+
+            provider.Get(new { Id = 1 }).Should().Be("unico");
+        }
+
+        [Fact]
+        public void InMemory_NullKeyOrItem_AreIgnored()
+        {
+            var provider = new InMemoryCacheProvider();
+
+            provider.Put(null, new Product());
+            provider.Put(new Product { Id = 1 }, null);
+
+            provider.Get(new Product { Id = 1 }).Should().BeNull();
+        }
+
+        [Fact]
+        public void InMemory_MemoryLimitNotReached_KeepsItems()
+        {
+            var provider = new InMemoryCacheProvider(memorySizeLimit: 10000);
+            var item = new Product { Id = 1, Name = "Caneta" };
+
+            provider.Put(item, item);
+
+            provider.Get(item).Should().BeSameAs(item);
+        }
+
         // ── DistributedCacheProvider ────────────────────────────────────
 
         [Fact]
@@ -148,6 +179,62 @@ namespace Rochas.CacheIndexer.Tests
             provider.Del(new Product { Id = 9 });
 
             provider.Get(new Product { Id = 9 }).Should().BeNull();
+        }
+
+        [Fact]
+        public void Distributed_Get_NullKey_ReturnsNull()
+        {
+            var provider = new DistributedCacheProvider(new FakeDistributedCache());
+
+            provider.Get(null).Should().BeNull();
+        }
+
+        [Fact]
+        public void Distributed_Put_NullArguments_AreIgnored()
+        {
+            var fake = new FakeDistributedCache();
+            var provider = new DistributedCacheProvider(fake);
+
+            provider.Put(null, new Product { Id = 5 });
+            provider.Put(new Product { Id = 5 }, null);
+
+            provider.Get(new Product { Id = 5 }).Should().BeNull();
+        }
+
+        [Fact]
+        public void Distributed_Del_NullKey_DoesNotThrow()
+        {
+            var provider = new DistributedCacheProvider(new FakeDistributedCache());
+
+            provider.Del(null);
+        }
+
+        [Fact]
+        public void Distributed_DelDeleteAll_ThrowsNotSupported()
+        {
+            var provider = new DistributedCacheProvider(new FakeDistributedCache());
+
+            Action act = () => provider.Del(new Product { Id = 1 }, deleteAll: true);
+
+            act.Should().Throw<NotSupportedException>();
+        }
+
+        [Fact]
+        public void Distributed_Clear_ThrowsNotSupported()
+        {
+            var provider = new DistributedCacheProvider(new FakeDistributedCache());
+
+            Action act = () => provider.Clear();
+
+            act.Should().Throw<NotSupportedException>();
+        }
+
+        [Fact]
+        public void Distributed_ConnectionStringCtor_CreatesRedisCache()
+        {
+            var provider = new DistributedCacheProvider("localhost:6379");
+
+            provider.Should().NotBeNull();
         }
 
         // ── CompositeCacheProvider ──────────────────────────────────────
@@ -195,6 +282,55 @@ namespace Rochas.CacheIndexer.Tests
 
             l1.Get(item).Should().BeNull();
             l2.Get(item).Should().BeNull();
+        }
+
+        [Fact]
+        public void Composite_Get_L1Hit_DoesNotTouchL2()
+        {
+            var l1 = new InMemoryCacheProvider();
+            var l2 = new InMemoryCacheProvider();
+            var provider = new CompositeCacheProvider(l1, l2);
+            var item = new Product { Id = 12, Name = "Mousepad" };
+            l1.Put(item, item);
+
+            var result = provider.Get(item);
+
+            result.Should().BeSameAs(item);
+            l2.Get(item).Should().BeNull(); // não foi promovido nem lido da L2
+        }
+
+        [Fact]
+        public void Composite_Get_MissInBoth_ReturnsNull()
+        {
+            var provider = new CompositeCacheProvider(new InMemoryCacheProvider(), new InMemoryCacheProvider());
+
+            provider.Get(new Product { Id = 404 }).Should().BeNull();
+        }
+
+        [Fact]
+        public void Composite_Clear_EmptiesBothLayers()
+        {
+            var l1 = new InMemoryCacheProvider();
+            var l2 = new InMemoryCacheProvider();
+            var provider = new CompositeCacheProvider(l1, l2);
+            var item = new Product { Id = 13, Name = "Monitor 2" };
+            l1.Put(item, item);
+            l2.Put(item, item);
+
+            provider.Clear();
+
+            l1.Get(item).Should().BeNull();
+            l2.Get(item).Should().BeNull();
+        }
+
+        [Fact]
+        public void Composite_NullLayer_Throws()
+        {
+            Action l1 = () => new CompositeCacheProvider(null, new InMemoryCacheProvider());
+            l1.Should().Throw<ArgumentNullException>();
+
+            Action l2 = () => new CompositeCacheProvider(new InMemoryCacheProvider(), null);
+            l2.Should().Throw<ArgumentNullException>();
         }
 
         // ── PersistenceChannelCacheProvider ─────────────────────────────
@@ -276,6 +412,52 @@ namespace Rochas.CacheIndexer.Tests
             provider.Get(item).Should().BeSameAs(item);
         }
 
+        [Fact]
+        public void PersistenceChannel_NullInnerProvider_Throws()
+        {
+            Action act = () => new PersistenceChannelCacheProvider(null);
+
+            act.Should().Throw<ArgumentNullException>();
+        }
+
+        [Fact]
+        public async Task PersistenceChannel_UnboundedSubscribe_ReceivesEvents()
+        {
+            using var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
+            var reader = provider.Subscribe(capacity: 0);
+            var received = new List<PersistenceChannelCacheProvider.ChannelMessage>();
+
+            provider.Put(new Product { Id = 1 }, new Product { Id = 1 });
+
+            await foreach (var msg in reader.ReadAllAsync())
+            {
+                received.Add(msg);
+                break;
+            }
+
+            received.Should().ContainSingle();
+            received[0].Action.Should().Be(PersistenceChannelCacheProvider.ChannelAction.Put);
+        }
+
+        [Fact]
+        public async Task PersistenceChannel_Consume_CancellationExitsCleanly()
+        {
+            var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
+            var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var task = Task.Run(async () =>
+            {
+                await foreach (var _ in provider.Consume()) { }
+                completed.TrySetResult(true);
+            });
+
+            await Task.Delay(100); // deixa o loop pendurado em ReadAsync
+            provider.Dispose();    // cancela o token interno -> OperationCanceledException -> yield break
+
+            (await Task.WhenAny(completed.Task, Task.Delay(5000)))
+                .Should().Be(completed.Task, "Consume deveria encerrar ao cancelar o provider");
+        }
+
         private static async Task ConsumeUntilAsync(
             PersistenceChannelCacheProvider provider,
             List<PersistenceChannelCacheProvider.ChannelMessage> sink,
@@ -319,6 +501,44 @@ namespace Rochas.CacheIndexer.Tests
             DataCache.Initialize(memorySizeLimit: 100);
 
             DataCache.DefaultProvider.Should().BeOfType<InMemoryCacheProvider>();
+        }
+
+        [Fact]
+        public void DataCache_Del_RemovesItemFromProvider()
+        {
+            DataCache.Initialize(new InMemoryCacheProvider());
+            var item = new Product { Id = 21, Name = "Lapis" };
+
+            DataCache.Put(item, item);
+            DataCache.Del(item);
+
+            DataCache.Get(item).Should().BeNull();
+        }
+
+        [Fact]
+        public void DataCache_Clear_EmptiesProvider()
+        {
+            DataCache.Initialize(new InMemoryCacheProvider());
+            var item = new Product { Id = 22, Name = "Regua" };
+
+            DataCache.Put(item, item);
+            DataCache.Clear();
+
+            DataCache.Get(item).Should().BeNull();
+        }
+
+        [Fact]
+        public void DataCache_GetAndDelAndClear_Uninitialized_Throw()
+        {
+            DataCache.Initialize(null);
+
+            Action get = () => DataCache.Get(new Product { Id = 1 });
+            Action del = () => DataCache.Del(new Product { Id = 1 });
+            Action clear = () => DataCache.Clear();
+
+            get.Should().Throw<InvalidOperationException>();
+            del.Should().Throw<InvalidOperationException>();
+            clear.Should().Throw<InvalidOperationException>();
         }
 
         // ── CacheableAttribute ──────────────────────────────────────────

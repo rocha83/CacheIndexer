@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Rochas.CacheIndexer.Helpers;
 using Rochas.CacheIndexer.Providers;
 using Rochas.DapperRepository.Specification.Enums;
@@ -85,6 +86,22 @@ namespace Rochas.CacheIndexer.Tests
         }
 
         [Fact]
+        public void Dispatch_NullRepository_Throws()
+        {
+            Action act = () => new DataDispatcher<Product>(null);
+
+            act.Should().Throw<ArgumentNullException>();
+        }
+
+        [Fact]
+        public async Task Dispatch_NullMessage_IsIgnored()
+        {
+            var dispatcher = new DataDispatcher<Product>(new FakeGenericRepository<Product>());
+
+            await dispatcher.DispatchAsync(null);
+        }
+
+        [Fact]
         public async Task Worker_ReplicatesPutEvent_ToRepository()
         {
             var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
@@ -106,7 +123,82 @@ namespace Rochas.CacheIndexer.Tests
             }
         }
 
+        [Fact]
+        public async Task Worker_MessageFailure_LogsErrorAndKeepsConsuming()
+        {
+            var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
+            var repo = new FakeGenericRepository<Product>();
+            var logger = new FakeLogger();
+            var worker = new PersistenceChannelWorker<Product>(provider, new DataDispatcher<Product>(repo), logger);
+            var item = new Product { Id = 43, Name = "Pasta" };
+
+            await worker.StartAsync(CancellationToken.None);
+            try
+            {
+                provider.Del(new Product { Id = 1 }, deleteAll: true);   // DispatchAsync lança NotSupportedException
+                provider.Put(new { Id = 43 }, item);                     // consumo deve continuar
+
+                var received = await repo.WaitForAddAsync(CancellationToken.None, TimeSpan.FromSeconds(5));
+                received.Should().BeSameAs(item);
+                logger.Logs.Should().NotBeEmpty();
+            }
+            finally
+            {
+                await worker.StopAsync(CancellationToken.None);
+            }
+        }
+
+        [Fact]
+        public void Worker_NullProvider_Throws()
+        {
+            var dispatcher = new DataDispatcher<Product>(new FakeGenericRepository<Product>());
+
+            Action act = () => new PersistenceChannelWorker<Product>(null, dispatcher);
+
+            act.Should().Throw<ArgumentNullException>();
+        }
+
+        [Fact]
+        public async Task Worker_StopWhileIdle_ExitsGracefully()
+        {
+            var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
+            var repo = new FakeGenericRepository<Product>();
+            var worker = new PersistenceChannelWorker<Product>(provider, new DataDispatcher<Product>(repo));
+
+            await worker.StartAsync(CancellationToken.None);
+            await Task.Delay(100); // loop ocioso pendurado em ReadAllAsync
+            await worker.StopAsync(CancellationToken.None);
+
+            worker.Should().NotBeNull(); // StopAsync retornou: ExecuteAsync encerrou sem exceção
+        }
+
+        [Fact]
+        public async Task Worker_ChannelCompleted_EndsLoopNormally()
+        {
+            var provider = new PersistenceChannelCacheProvider(new InMemoryCacheProvider());
+            var repo = new FakeGenericRepository<Product>();
+            var worker = new PersistenceChannelWorker<Product>(provider, new DataDispatcher<Product>(repo));
+
+            await worker.StartAsync(CancellationToken.None);
+            await Task.Delay(100);
+            provider.Dispose(); // completa o canal -> ReadAllAsync termina -> loop sai
+            await worker.StopAsync(CancellationToken.None);
+        }
+
         // ── Fake IGenericRepository ─────────────────────────────────────
+
+        private class FakeLogger : ILogger
+        {
+            public ConcurrentQueue<(LogLevel Level, string Message)> Logs { get; } = new();
+
+            public IDisposable BeginScope<TState>(TState state) => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception,
+                Func<TState, Exception, string> formatter)
+                => Logs.Enqueue((logLevel, formatter(state, exception)));
+        }
 
         private class FakeGenericRepository<T> : IGenericRepository<T> where T : class
         {
