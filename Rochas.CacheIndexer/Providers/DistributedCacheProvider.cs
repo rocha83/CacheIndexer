@@ -2,6 +2,7 @@ using System;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.StackExchangeRedis;
+using Rochas.Data.Specification.Interfaces;
 
 namespace Rochas.CacheIndexer.Providers
 {

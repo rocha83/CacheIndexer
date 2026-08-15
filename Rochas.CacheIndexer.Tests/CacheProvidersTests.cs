@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Caching.Distributed;
-using Rochas.CacheIndexer.Annotations;
+using Rochas.Data.Specification.Annotations;
 using Rochas.CacheIndexer.Providers;
 using Xunit;
 

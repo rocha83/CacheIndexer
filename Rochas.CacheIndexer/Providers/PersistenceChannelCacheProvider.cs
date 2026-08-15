@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
+using Rochas.Data.Specification.Interfaces;
 using System.Threading.Tasks;
 
 namespace Rochas.CacheIndexer.Providers
