@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -10,8 +10,8 @@ namespace Rochas.CacheIndexer.Helpers
 {
     /// <summary>
     /// Worker Background Service (Microsoft.Extensions.Hosting) que consome o canal
-    /// de persistência e replica cada evento em um SGDB via DataDispatcher&lt;T&gt;
-    /// (IGenericRepository&lt;T&gt; do Rochas.DapperRepository.Specification).
+    /// de persistÃªncia e replica cada evento em um SGDB via DataDispatcher&lt;T&gt;
+    /// (IGenericRepository&lt;T&gt; do Rochas.Data.Specification).
     ///
     /// Registro em ASP.NET Core (DI):
     ///   services.AddSingleton(provider);
@@ -20,8 +20,8 @@ namespace Rochas.CacheIndexer.Helpers
     ///           sp.GetRequiredService&lt;PersistenceChannelCacheProvider&gt;(),
     ///           new DataDispatcher&lt;Product&gt;(new GenericRepository&lt;Product&gt;(engine, connStr))));
     ///
-    /// A assinatura do canal é criada no construtor; o loop é iniciado no StartAsync
-    /// e interrompido no StopAsync (graceful). Falhas por mensagem são registradas
+    /// A assinatura do canal Ã© criada no construtor; o loop Ã© iniciado no StartAsync
+    /// e interrompido no StopAsync (graceful). Falhas por mensagem sÃ£o registradas
     /// no logger e o consumo continua.
     /// </summary>
     public class PersistenceChannelWorker<T> : BackgroundService where T : class
@@ -57,7 +57,7 @@ namespace Rochas.CacheIndexer.Helpers
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Falha ao replicar mensagem {Action} no canal de persistência.", msg.Action);
+                    _logger?.LogError(ex, "Falha ao replicar mensagem {Action} no canal de persistÃªncia.", msg.Action);
                 }
             }
         }

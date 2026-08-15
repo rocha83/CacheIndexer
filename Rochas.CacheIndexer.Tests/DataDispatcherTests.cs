@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,9 +8,9 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Rochas.CacheIndexer.Helpers;
 using Rochas.CacheIndexer.Providers;
-using Rochas.DapperRepository.Specification.Enums;
-using Rochas.DapperRepository.Specification.Interfaces;
-using Rochas.DapperRepository.Specification.Models;
+using Rochas.Data.Specification.Enums;
+using Rochas.Data.Specification.Interfaces;
+using Rochas.Data.Specification.Models;
 using Xunit;
 
 namespace Rochas.CacheIndexer.Tests
@@ -135,7 +135,7 @@ namespace Rochas.CacheIndexer.Tests
             await worker.StartAsync(CancellationToken.None);
             try
             {
-                provider.Del(new Product { Id = 1 }, deleteAll: true);   // DispatchAsync lança NotSupportedException
+                provider.Del(new Product { Id = 1 }, deleteAll: true);   // DispatchAsync lanÃ§a NotSupportedException
                 provider.Put(new { Id = 43 }, item);                     // consumo deve continuar
 
                 var received = await repo.WaitForAddAsync(CancellationToken.None, TimeSpan.FromSeconds(5));
@@ -169,7 +169,7 @@ namespace Rochas.CacheIndexer.Tests
             await Task.Delay(100); // loop ocioso pendurado em ReadAllAsync
             await worker.StopAsync(CancellationToken.None);
 
-            worker.Should().NotBeNull(); // StopAsync retornou: ExecuteAsync encerrou sem exceção
+            worker.Should().NotBeNull(); // StopAsync retornou: ExecuteAsync encerrou sem exceÃ§Ã£o
         }
 
         [Fact]
@@ -185,7 +185,7 @@ namespace Rochas.CacheIndexer.Tests
             await worker.StopAsync(CancellationToken.None);
         }
 
-        // ── Fake IGenericRepository ─────────────────────────────────────
+        // â”€â”€ Fake IGenericRepository â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private class FakeLogger : ILogger
         {
